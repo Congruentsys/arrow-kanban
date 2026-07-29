@@ -42,6 +42,22 @@ if [ -n "$badpaths" ]; then
     fail "board-content / research / eval / parquet data is committed (above) — instances stay private."
 fi
 
+# ── (c2) No path deps / closed-crate deps in Cargo.toml ──────────────────────
+# A published FOSS crate resolves PURELY from crates.io. A `path = "../…"`
+# dependency or a `nusy-*`/`noesis-*` dep would pull closed monorepo code — and
+# would BUILD FINE on a machine that has the monorepo checked out adjacent, so the
+# clean-clone build alone can't be trusted to catch it (EXPR-6756 finding). Scan
+# the manifest directly. (`[[bin]] path = "src/main.rs"` is a target path, not a
+# dependency — only parent-relative `path = "../` deps are flagged.)
+if [ -f Cargo.toml ]; then
+    pathdeps=$(grep -nE 'path[[:space:]]*=[[:space:]]*"\.\.' Cargo.toml || true)
+    closeddeps=$(grep -nE '^[[:space:]]*(nusy-|noesis)[a-z0-9-]*[[:space:]]*=' Cargo.toml || true)
+    if [ -n "$pathdeps$closeddeps" ]; then
+        printf '%s\n%s\n' "$pathdeps" "$closeddeps" | grep -v '^$' | head -20 >&2
+        fail "Cargo.toml has a parent-relative path dep or a closed-crate (nusy-*/noesis-*) dep (above) — the FOSS core must resolve only from crates.io."
+    fi
+fi
+
 # ── (d) License scan ─────────────────────────────────────────────────────────
 [ -f LICENSE ] || fail "LICENSE file is missing."
 grep -qi 'MIT License' LICENSE || fail "LICENSE is not MIT."
