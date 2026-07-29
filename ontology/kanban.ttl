@@ -1,0 +1,285 @@
+# kanban.ttl — Core OWL Ontology for arrow-kanban
+#
+# Defines the class hierarchy and property vocabulary for all 13 arrow-kanban
+# item types. This is the foundational ontology that SHACL shapes (EX-3218/3219/3220)
+# and the template system (EX-3221) depend on.
+#
+# Namespace: kb: <https://congruentsys.org/ns/arrow-kanban/kanban/>
+#
+# Installation:
+#   Built-in: compiled into arrow-kanban binary (shipped in crates/arrow-kanban/ontology/)
+#   Project-local override: .arrow-kanban/kanban.ttl
+#   User-global override:   ~/.config/arrow-kanban/kanban.ttl
+#
+# Override priority: project-local > user-global > built-in
+#
+# Usage by SHACL shapes:
+#   sh:targetClass kb:Expedition (requires this ontology to be loaded first)
+#
+# V12/V13 parity: none — arrow-kanban had no formal OWL ontology. This is new.
+# V14 capability: all 13 item types queryable as typed graph nodes via SPARQL.
+
+@prefix kb:   <https://congruentsys.org/ns/arrow-kanban/kanban/> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+# ---------------------------------------------------------------------------
+# Ontology declaration
+# ---------------------------------------------------------------------------
+
+<https://congruentsys.org/ns/arrow-kanban/kanban/> a owl:Ontology ;
+    rdfs:label "arrow-kanban Core Ontology" ;
+    rdfs:comment "OWL class hierarchy and property vocabulary for arrow-kanban item types." .
+
+# ---------------------------------------------------------------------------
+# Root item class
+# ---------------------------------------------------------------------------
+
+kb:Item a owl:Class ;
+    rdfs:label "Item" ;
+    rdfs:comment "Root class for all arrow-kanban items (dev board and research board)." .
+
+# ---------------------------------------------------------------------------
+# Board partition classes
+# ---------------------------------------------------------------------------
+
+kb:DevItem a owl:Class ;
+    rdfs:subClassOf kb:Item ;
+    rdfs:label "Dev Board Item" ;
+    rdfs:comment "Items on the development board: Expedition, Voyage, Campaign, Chore, Hazard, Signal, Feature." .
+
+kb:ResearchItem a owl:Class ;
+    rdfs:subClassOf kb:Item ;
+    rdfs:label "Research Board Item" ;
+    rdfs:comment "Items on the research board: Paper, Hypothesis, Experiment, Measure, Idea, Literature." .
+
+# ---------------------------------------------------------------------------
+# Dev board item types (7)
+# ---------------------------------------------------------------------------
+
+kb:Expedition a owl:Class ;
+    rdfs:subClassOf kb:DevItem ;
+    rdfs:label "Expedition" ;
+    rdfs:comment "Multi-step feature, architecture work, or algorithm port. Requires phases, tests, and DoD." .
+
+kb:Voyage a owl:Class ;
+    rdfs:subClassOf kb:DevItem ;
+    rdfs:label "Voyage" ;
+    rdfs:comment "Campaign grouping 3+ related expeditions with a shared goal. Created before its expeditions." .
+
+kb:Campaign a owl:Class ;
+    rdfs:subClassOf kb:DevItem ;
+    rdfs:label "Campaign" ;
+    rdfs:comment "Program grouping 2+ related voyages under one narrative arc. Member voyages link via kb:partOf (opt-in graph structure, not a forced parent). The container above a voyage." .
+
+kb:Chore a owl:Class ;
+    rdfs:subClassOf kb:DevItem ;
+    rdfs:label "Chore" ;
+    rdfs:comment "Routine maintenance, tooling, cleanup, or infrastructure work." .
+
+kb:Hazard a owl:Class ;
+    rdfs:subClassOf kb:DevItem ;
+    rdfs:label "Hazard" ;
+    rdfs:comment "Risk or blocker that may impact planned work. Requires mitigation plan." .
+
+kb:Signal a owl:Class ;
+    rdfs:subClassOf kb:DevItem ;
+    rdfs:label "Signal" ;
+    rdfs:comment "Observation, anomaly, or data point captured immediately. No approval needed." .
+
+kb:Feature a owl:Class ;
+    rdfs:subClassOf kb:DevItem ;
+    rdfs:label "Feature" ;
+    rdfs:comment "User-facing capability with acceptance criteria." .
+
+# ---------------------------------------------------------------------------
+# Research board item types (6)
+# ---------------------------------------------------------------------------
+
+kb:Paper a owl:Class ;
+    rdfs:subClassOf kb:ResearchItem ;
+    rdfs:label "Paper" ;
+    rdfs:comment "Research paper in progress or external paper being tracked." .
+
+kb:Hypothesis a owl:Class ;
+    rdfs:subClassOf kb:ResearchItem ;
+    rdfs:label "Hypothesis" ;
+    rdfs:comment "Testable claim about system behavior. Never complete — validated per experiment and version." .
+
+kb:Experiment a owl:Class ;
+    rdfs:subClassOf kb:ResearchItem ;
+    rdfs:label "Experiment" ;
+    rdfs:comment "Concrete test run (benchmark, A/B test, spike). One-shot and version-bound." .
+
+kb:Measure a owl:Class ;
+    rdfs:subClassOf kb:ResearchItem ;
+    rdfs:label "Measure" ;
+    rdfs:comment "Metric tracked across experiments and being versions. Stays active indefinitely." .
+
+kb:Idea a owl:Class ;
+    rdfs:subClassOf kb:ResearchItem ;
+    rdfs:label "Idea" ;
+    rdfs:comment "Capture for a potential hypothesis. Promoted to Hypothesis or abandoned." .
+
+kb:Literature a owl:Class ;
+    rdfs:subClassOf kb:ResearchItem ;
+    rdfs:label "Literature" ;
+    rdfs:comment "Survey of external papers for project relevance. Has a completion state." .
+
+# ---------------------------------------------------------------------------
+# Board and relation structural classes
+# ---------------------------------------------------------------------------
+
+kb:Board a owl:Class ;
+    rdfs:label "Board" ;
+    rdfs:comment "A arrow-kanban board (development or research)." .
+
+kb:DevBoard a owl:Class ;
+    rdfs:subClassOf kb:Board ;
+    rdfs:label "Development Board" .
+
+kb:ResearchBoard a owl:Class ;
+    rdfs:subClassOf kb:Board ;
+    rdfs:label "Research Board" .
+
+kb:Relation a owl:Class ;
+    rdfs:label "Relation" ;
+    rdfs:comment "A directed relation between two items. Stored in the relations Arrow table." .
+
+# ---------------------------------------------------------------------------
+# Core item datatype properties
+# (correspond to columns in the Arrow items RecordBatch schema)
+# ---------------------------------------------------------------------------
+
+kb:status a owl:DatatypeProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range xsd:string ;
+    rdfs:label "status" ;
+    rdfs:comment "Workflow state. Valid values are type-specific (see SHACL shapes)." .
+
+kb:priority a owl:DatatypeProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range xsd:string ;
+    rdfs:label "priority" ;
+    rdfs:comment "Priority level: low | medium | high | critical." .
+
+kb:assignee a owl:DatatypeProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range xsd:string ;
+    rdfs:label "assignee" ;
+    rdfs:comment "Agent responsible for this item: M5 | DGX | Mini | unassigned." .
+
+kb:body a owl:DatatypeProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range xsd:string ;
+    rdfs:label "body" ;
+    rdfs:comment "Markdown body content (phases, context, DoD, turtle blocks, etc.)." .
+
+kb:tags a owl:DatatypeProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range xsd:string ;
+    rdfs:label "tags" ;
+    rdfs:comment "Comma-separated tags for filtering (e.g. v14,rust,shacl)." .
+
+# ---------------------------------------------------------------------------
+# Relation object properties
+# (correspond to predicate values in the Arrow relations RecordBatch)
+#
+# THIS SECTION IS THE RUNTIME EDGE VOCABULARY (EX-6245 / VY-6244): arrow-kanban
+# loads these owl:ObjectProperty declarations at startup and validates every
+# `--relate` edge against them. rdfs:domain/rdfs:range are enforced
+# (kb:Item = any item type); owl:inverseOf declares the derived inverse (only
+# ONE direction of an edge is ever stored). Editing this block changes the
+# live vocabulary — the loader is fail-closed, so a malformed edit falls back
+# to the compiled-in strict set rather than silently opening the vocabulary.
+# ---------------------------------------------------------------------------
+
+kb:related a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    rdfs:label "related" ;
+    rdfs:comment "informational link between any two items (the existing --related)" .
+
+kb:dependsOn a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:blocks ;
+    rdfs:label "dependsOn" ;
+    rdfs:comment "this item is BLOCKED BY the target (the existing --depends-on)" .
+
+# Referenced by the SHACL shapes; previously only in the compiled const (CH-6109).
+kb:blocks a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:dependsOn ;
+    rdfs:label "blocks" ;
+    rdfs:comment "this item BLOCKS the target (inverse of dependsOn; stored one way only)" .
+
+# Referenced by the SHACL shapes; previously only in the compiled const (CH-6109).
+kb:parent a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    rdfs:label "parent" ;
+    rdfs:comment "hierarchical containment — this item is contained by the target" .
+
+# Campaign membership (EX-6246 / VY-6248): a member item is part of a larger
+# grouping node — the predicate the Campaign type (EX-6249) and the rollup view
+# (EX-6250) traverse. Added by editing THIS FILE ONLY — no Rust vocabulary
+# change — proving the open-graph property of the EX-6245 data-driven loader.
+# Distinct from kb:parent (informal containment, no inverse): partOf/hasMember
+# is the queryable membership pair. Domain/range are kb:Item (any→any) because
+# membership crosses types (voyage→campaign today; research groupings later);
+# deliberately NOT projected to a flat items column — no current consumer
+# (roadmap/critical-path/worklist) reads it, and EX-6250 reads the typed edges.
+kb:partOf a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:hasMember ;
+    rdfs:label "partOf" ;
+    rdfs:comment "this item is a member of the target grouping (e.g. a voyage partOf a campaign); only ONE direction is stored" .
+
+kb:hasMember a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:partOf ;
+    rdfs:label "hasMember" ;
+    rdfs:comment "the target is a member of this grouping (derived inverse of partOf; stored one way only)" .
+
+kb:implements a owl:ObjectProperty ;
+    rdfs:domain kb:Expedition ;
+    rdfs:range kb:Voyage ;
+    owl:inverseOf kb:spawns ;
+    rdfs:label "implements" ;
+    rdfs:comment "an expedition delivers work toward a voyage" .
+
+kb:spawns a owl:ObjectProperty ;
+    rdfs:domain kb:Voyage ;
+    rdfs:range kb:Expedition ;
+    owl:inverseOf kb:implements ;
+    rdfs:label "spawns" ;
+    rdfs:comment "a voyage creates and coordinates an expedition" .
+
+kb:tests a owl:ObjectProperty ;
+    rdfs:domain kb:Hypothesis ;
+    rdfs:range kb:Paper ;
+    rdfs:label "tests" ;
+    rdfs:comment "a hypothesis is tested in the context of a paper" .
+
+kb:validates a owl:ObjectProperty ;
+    rdfs:domain kb:Experiment ;
+    rdfs:range kb:Hypothesis ;
+    rdfs:label "validates" ;
+    rdfs:comment "an experiment produces evidence for or against a hypothesis" .
+
+# The ontology's canonical range is kb:Experiment, but `/hypothesize` links
+# measures to the HYPOTHESIS. The comma-list below is read by the loader as a
+# UNION (either target accepted) — deliberately mirroring live practice pending
+# the CH-6109 follow-up ruling, exactly as the retired const did. (Strict OWL
+# would intersect multiple rdfs:range triples; this file trades that formality
+# for not silently invalidating existing edges.)
+kb:measures a owl:ObjectProperty ;
+    rdfs:domain kb:Measure ;
+    rdfs:range kb:Experiment , kb:Hypothesis ;
+    rdfs:label "measures" ;
+    rdfs:comment "a measure tracks the outcome of an experiment (or, per current practice, a hypothesis)" .

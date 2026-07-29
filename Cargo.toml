@@ -1,0 +1,37 @@
+[package]
+name = "arrow-kanban"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Arrow-native, graph-native kanban engine — SHACL shapes, dual boards, typed relationships, optional NATS multi-agent collaboration."
+repository = "https://github.com/hankh95/arrow-kanban"
+homepage = "https://github.com/hankh95/arrow-kanban"
+readme = "README.md"
+keywords = ["kanban", "arrow", "parquet", "nats", "project-management"]
+categories = ["command-line-utilities", "data-structures"]
+
+[[bin]]
+name = "arrow-kanban"
+path = "src/main.rs"
+
+[dependencies]
+arrow = { version = "57", features = ["prettyprint"] }
+parquet = { version = "57", features = ["arrow"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+sha2 = "0.10"
+async-nats = { version = "0.38", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+
+[features]
+default = []
+client = ["dep:async-nats", "dep:tokio"]
+
+[dev-dependencies]
+tempfile = "3"

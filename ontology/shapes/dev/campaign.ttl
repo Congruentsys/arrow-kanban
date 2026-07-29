@@ -1,0 +1,90 @@
+# campaign.ttl — SHACL Shape for kb:Campaign (dev board)
+#
+# A Campaign is the container ABOVE a voyage — a program that groups 2+ related
+# voyages under one narrative arc (EX-6249). Member voyages point at it via a
+# graph edge (kb:partOf, added in Phase 1 / VY-6244), NOT a flat parent field:
+# membership is opt-in graph structure, like a tag but queryable — never a forced
+# hierarchy rung every voyage must fill.
+#
+# Sibling of voyage.ttl; created before its member voyages exist is fine.
+
+@prefix kb:   <https://congruentsys.org/ns/arrow-kanban/kanban/> .
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+kb:CampaignShape a sh:NodeShape ;
+    sh:targetClass kb:Campaign ;
+    sh:description "Program grouping 2+ related voyages under one arc. Member voyages link via kb:partOf." ;
+
+    # --- Metadata properties ---
+
+    sh:property [
+        sh:path kb:id ; sh:order 0 ;
+        sh:pattern "^CA-\\d{4,}$" ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "ID must match CA-NNNN format (e.g. CA-3211)" ] ;
+
+    sh:property [
+        sh:path kb:priority ; sh:order 1 ;
+        sh:in ( "low" "medium" "high" "critical" ) ;
+        sh:minCount 0 ;
+        sh:defaultValue "high" ;
+        sh:description "Priority level — campaigns default high" ] ;
+
+    sh:property [
+        sh:path kb:tags ; sh:order 2 ;
+        sh:minCount 0 ;
+        sh:description "Comma-separated tags for filtering (e.g. v20,kanban-v2)" ] ;
+
+    sh:property [
+        sh:path kb:related ; sh:order 3 ;
+        sh:minCount 0 ;
+        sh:description "Member voyage IDs — a projection of the kb:partOf edges" ] ;
+
+    sh:property [
+        sh:path kb:updated_at ; sh:order 4 ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 0 ;
+        sh:description "Auto-set on any mutation" ] ;
+
+    sh:property [
+        sh:path kb:body ; sh:order 10 ;
+        sh:minCount 1 ;
+        sh:message "body required — use: nk templates campaign" ] ;
+
+    # --- Body section structure ---
+
+    kb:requiredSection [
+        kb:sectionName "Problem" ; sh:order 1 ;
+        kb:headingLevel 2 ;
+        kb:templateHint "What program-level outcome does this campaign drive? Why do these voyages belong together rather than standing alone?" ;
+        kb:required true ] ;
+
+    kb:requiredSection [
+        kb:sectionName "Goal" ; sh:order 2 ;
+        kb:headingLevel 2 ;
+        kb:templateHint "The observable capability the whole program delivers when all member voyages ship. One paragraph." ;
+        kb:required true ] ;
+
+    kb:requiredSection [
+        kb:sectionName "Voyages" ; sh:order 3 ;
+        kb:headingLevel 2 ;
+        kb:templateHint "| # | ID | Title | Depends On |\n|---|-----|-------|-----------|\n| 1 | VY-XXXX | Title | — |\nMember voyages link back with: nk update VY-XXXX --relate partOf:CA-XXXX" ;
+        kb:required true ] ;
+
+    kb:requiredSection [
+        kb:sectionName "Done When" ; sh:order 4 ;
+        kb:headingLevel 2 ;
+        kb:templateHint "Observable end state for the whole program — what the fleet can DO once every member voyage is done." ;
+        kb:required true ] ;
+
+    kb:requiredSection [
+        kb:sectionName "Related" ; sh:order 5 ;
+        kb:headingLevel 2 ;
+        kb:templateHint "- Depends on: CA-XXXX (<name>)\n- Research: PAPER-XXX (if applicable)" ;
+        kb:required false ] ;
+
+    kb:sectionOrder ( "Problem" "Goal" "Voyages" "Done When" "Related" ) ;
+
+    kb:hasComment [ sh:node kb:CommentShape ] .

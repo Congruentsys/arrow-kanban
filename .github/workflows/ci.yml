@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: MIT
+# arrow-kanban CI — clean-clone build/test + the BLOCKING FOSS export gate.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # (a) The open crate must build + test from a clean clone with ZERO path/monorepo
+  # deps — everything resolves from crates.io. `--locked` pins Cargo.lock so a
+  # dependency drift can't silently change what ships.
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: build (default)
+        run: cargo build --locked --verbose
+      - name: build (client feature)
+        run: cargo build --locked --features client --verbose
+      - name: test (default)
+        run: cargo test --locked --verbose
+      - name: test (client feature)
+        run: cargo test --locked --features client --verbose
+      - name: clippy (default)
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: clippy (client feature)
+        run: cargo clippy --all-targets --locked --features client -- -D warnings
+
+  # (b)(c)(d) The BLOCKING export gate — closed-vocabulary scan, no board/research
+  # data, license + SPDX. A closed-source leak fails the build.
+  export-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: FOSS export gate
+        run: bash scripts/export-gate.sh
