@@ -114,7 +114,15 @@ fi
 # lowercase word immediately before the ID separates them — verified in both directions by
 # the red battery, which asserts it catches a printed citation AND spares four real
 # fixture shapes taken from this tree.
-PROSE_ID="[a-z]{2,} +$PROV_ID"
+# Two shapes, because a citation can sit either AFTER prose or BEFORE it:
+#   (i)  prose-then-ID   — "... see HZ-6053."      : a lowercase word precedes the ID.
+#   (ii) ID-then-prose   — "HZ-6053 INVARIANT ..."  : the ID OPENS a printed string (CH-6863).
+# (ii) was the original blind spot: requiring a preceding lowercase word made the gate unable
+# to see the exact line PR #7 removed (write_durability_acceptance.rs:128), i.e. the net could
+# not catch its own motivating case. What separates (ii) from fixture DATA is what FOLLOWS the
+# ID — prose continues with a space/colon then a letter, whereas fixture data closes its quote
+# immediately (`"EX-3001",`). Both directions are pinned by controls in red-battery.sh.
+PROSE_ID="([a-z]{2,} +$PROV_ID|\"$PROV_ID[: ]+[A-Za-z])"
 prosehits=$(grep -rnE "$PROSE_ID" $SCAN_DIRS 2>/dev/null \
     | grep -vE 'export-gate|red-battery' \
     | sed -E "s/$PROV_OK//g" \
