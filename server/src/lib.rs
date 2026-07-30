@@ -18,6 +18,7 @@ pub mod engine;
 pub mod events;
 pub mod handlers;
 pub mod health;
+pub mod lease;
 pub mod snapshot;
 pub mod state;
 pub mod storage;
