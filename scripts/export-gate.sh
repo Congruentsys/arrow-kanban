@@ -79,10 +79,22 @@ fi
 # on legitimate fixtures gets disabled, which protects nothing.
 PROV_ID='\b(CH|EX|EXP|VY|VOY|SG|PROP|EXPR|HZ|CHORE|PAPER)-[0-9]{4,}(\.[0-9]+)?\b'
 PROV_OK='\b(CH|EX|EXP|VY|VOY|SG|PROP|EXPR|HZ|CHORE|PAPER)-(42|1234|1235|1240)(\.[0-9]+)?\b'
+
+# PORTABILITY GUARD (CH-6876). The allowlist strip MUST actually strip on this host.
+# BSD/macOS `sed` silently IGNORES `\b` -- no error, no match -- so the strip became a
+# no-op there while `grep -E` (which does honor `\b`) still matched: the gate was GREEN on
+# Linux/CI and RED on macOS, i.e. its verdict depended on the OS. For a FOSS export trust
+# anchor that is an integrity bug, not a cosmetic one. `perl` honors `\b` on both and ships
+# with both. This probe fails LOUDLY rather than letting the divergence return silently.
+_strip_probe=$(printf 'EXPR-1234.1' | perl -pe "s/$PROV_OK//g" 2>/dev/null)
+if [ -n "$_strip_probe" ]; then
+    echo "allowlist strip left '$_strip_probe' (expected empty)" >&2
+    fail "the allowlist strip is a NO-OP on this host — the gate's verdict would be OS-dependent (CH-6876). Requires perl with \\b support."
+fi
 provhits=$(grep -rnE "$PROV_ID" $SCAN_DIRS 2>/dev/null \
     | grep -E ':[0-9]+:[[:space:]]*(//|#|\*)' \
     | grep -vE 'export-gate|red-battery' \
-    | sed -E "s/$PROV_OK//g" \
+    | perl -pe "s/$PROV_OK//g" \
     | grep -E "$PROV_ID" || true)
 if [ -n "$provhits" ]; then
     echo "$provhits" | head -20 >&2
@@ -125,7 +137,7 @@ fi
 PROSE_ID="([a-z]{2,} +$PROV_ID|\"$PROV_ID[: ]+[A-Za-z])"
 prosehits=$(grep -rnE "$PROSE_ID" $SCAN_DIRS 2>/dev/null \
     | grep -vE 'export-gate|red-battery' \
-    | sed -E "s/$PROV_OK//g" \
+    | perl -pe "s/$PROV_OK//g" \
     | grep -E "$PROSE_ID" || true)
 if [ -n "$prosehits" ]; then
     echo "$prosehits" | head -20 >&2
