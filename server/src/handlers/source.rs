@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 //! Git bundle transport handlers.
 
-use super::{error_response, parse_payload, serialize_response};
+use super::{error_response, parse_payload};
+use crate::engine::KanbanReply;
 use serde::Deserialize;
 
-pub(crate) fn handle_source_push(
+pub(crate) fn handle_source_push_typed(
     payload: &[u8],
     root: &std::path::Path,
-) -> Result<Vec<u8>, Vec<u8>> {
+) -> Result<KanbanReply, Vec<u8>> {
     #[derive(Deserialize)]
     struct Req {
         branch: String,
@@ -42,17 +43,17 @@ pub(crate) fn handle_source_push(
     );
 
     let agent = req.agent_name.as_deref().unwrap_or("agent");
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "message": format!("Pushed {} ({} bytes) by {}", req.branch, data.len(), agent),
         "branch": req.branch,
         "size_bytes": data.len(),
-    }))
+    })))
 }
 
-pub(crate) fn handle_source_pull(
+pub(crate) fn handle_source_pull_typed(
     payload: &[u8],
     root: &std::path::Path,
-) -> Result<Vec<u8>, Vec<u8>> {
+) -> Result<KanbanReply, Vec<u8>> {
     #[derive(Deserialize)]
     struct Req {
         branch: String,
@@ -74,17 +75,17 @@ pub(crate) fn handle_source_pull(
 
     let encoded = base64_encode_simple(&data);
 
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "branch": req.branch,
         "bundle_b64": encoded,
         "size_bytes": data.len(),
-    }))
+    })))
 }
 
-pub(crate) fn handle_source_branches(root: &std::path::Path) -> Result<Vec<u8>, Vec<u8>> {
+pub(crate) fn handle_source_branches_typed(root: &std::path::Path) -> Result<KanbanReply, Vec<u8>> {
     let bundles_dir = root.join("bundles");
     if !bundles_dir.exists() {
-        return serialize_response(&serde_json::json!({ "branches": [] }));
+        return Ok(KanbanReply::Value(serde_json::json!({ "branches": [] })));
     }
 
     let mut branches = Vec::new();
@@ -123,13 +124,15 @@ pub(crate) fn handle_source_branches(root: &std::path::Path) -> Result<Vec<u8>, 
             .cmp(&b.get("name").and_then(|v| v.as_str()))
     });
 
-    serialize_response(&serde_json::json!({ "branches": branches }))
+    Ok(KanbanReply::Value(
+        serde_json::json!({ "branches": branches }),
+    ))
 }
 
-pub(crate) fn handle_source_delete(
+pub(crate) fn handle_source_delete_typed(
     payload: &[u8],
     root: &std::path::Path,
-) -> Result<Vec<u8>, Vec<u8>> {
+) -> Result<KanbanReply, Vec<u8>> {
     #[derive(Deserialize)]
     struct Req {
         branch: String,
@@ -150,10 +153,10 @@ pub(crate) fn handle_source_delete(
     let _ = std::fs::remove_file(&bundle_path);
     let _ = std::fs::remove_file(&meta_path);
 
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "message": format!("Deleted bundle for '{}'", req.branch),
         "branch": req.branch,
-    }))
+    })))
 }
 
 /// Delegates to shared `arrow_kanban::base64`.

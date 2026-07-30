@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Core CRUD and analytics handlers.
 
-use super::{error_response, parse_payload, serialize_response, states_as_strings};
+use super::{error_response, states_as_strings};
+use crate::engine::KanbanReply;
 use arrow_kanban::crud::{CreateItemInput, KanbanStore};
 use arrow_kanban::item_type::ItemType;
 use arrow_kanban::relations::RelationsStore;
@@ -9,7 +10,7 @@ use arrow_kanban::{critical_path, display, export};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
-struct CreateRequest {
+pub struct CreateRequest {
     title: String,
     item_type: String,
     priority: Option<String>,
@@ -26,8 +27,8 @@ struct CreateRequest {
     relate: Vec<String>,
 }
 
-#[derive(Serialize)]
-struct CreateResponse {
+#[derive(Debug, Serialize)]
+pub struct CreateResponse {
     id: String,
     title: String,
     item_type: String,
@@ -84,13 +85,11 @@ fn parse_and_validate(
     Ok(out)
 }
 
-pub(crate) fn handle_create(
-    payload: &[u8],
+pub(crate) fn handle_create_typed(
+    req: CreateRequest,
     store: &mut KanbanStore,
     relations: &mut arrow_kanban::relations::RelationsStore,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let req: CreateRequest = parse_payload(payload)?;
-
+) -> Result<KanbanReply, Vec<u8>> {
     let item_type = ItemType::from_str_loose(&req.item_type).ok_or_else(|| {
         error_response(
             &format!("Unknown item type: {}", req.item_type),
@@ -137,19 +136,19 @@ pub(crate) fn handle_create(
         }
     }
 
-    serialize_response(&CreateResponse {
+    Ok(KanbanReply::Create(CreateResponse {
         id,
         title: req.title,
         item_type: req.item_type,
         status: "backlog".to_string(),
         relationships: edges.iter().map(|(p, t)| format!("{p}:{t}")).collect(),
-    })
+    }))
 }
 
 // ── Move ────────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct MoveRequest {
+pub struct MoveRequest {
     id: String,
     status: String,
     assignee: Option<String>,
@@ -160,17 +159,18 @@ struct MoveRequest {
     closed_by: Option<String>,
 }
 
-#[derive(Serialize)]
-struct MoveResponse {
+#[derive(Debug, Serialize)]
+pub struct MoveResponse {
     id: String,
     from: String,
     to: String,
     resolution: Option<String>,
 }
 
-pub(crate) fn handle_move(payload: &[u8], store: &mut KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: MoveRequest = parse_payload(payload)?;
-
+pub(crate) fn handle_move_typed(
+    req: MoveRequest,
+    store: &mut KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     // Validate resolution before the move
     arrow_kanban::state_machine::validate_resolution(req.resolution.as_deref(), &req.status)
         .map_err(|e| error_response(&format!("{e}"), "INVALID_RESOLUTION"))?;
@@ -233,25 +233,27 @@ pub(crate) fn handle_move(payload: &[u8], store: &mut KanbanStore) -> Result<Vec
             .map_err(|e| error_response(&format!("{e}"), "CLOSED_BY_FAILED"))?;
     }
 
-    serialize_response(&MoveResponse {
+    Ok(KanbanReply::Move(MoveResponse {
         id: req.id,
         from: from_status,
         to: req.status,
         resolution: req.resolution,
-    })
+    }))
 }
 
 // ── Ratify (CH-4906) ─────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct RatifyRequest {
+pub struct RatifyRequest {
     phase_tag: String,
 }
 
 /// First-class phase ratification: strip `pending-ratification` from every item carrying the phase
 /// tag, sprint-start its voyages, and verify none remain — atomically, server-side (no shell loop).
-pub(crate) fn handle_ratify(payload: &[u8], store: &mut KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: RatifyRequest = parse_payload(payload)?;
+pub(crate) fn handle_ratify_typed(
+    req: RatifyRequest,
+    store: &mut KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     let report = store
         .ratify_phase(&req.phase_tag)
         .map_err(|e| error_response(&format!("{e}"), "RATIFY_FAILED"))?;
@@ -265,18 +267,18 @@ pub(crate) fn handle_ratify(payload: &[u8], store: &mut KanbanStore) -> Result<V
             "RATIFY_INCOMPLETE",
         ));
     }
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "phase_tag": req.phase_tag,
         "stripped": report.stripped,
         "voyages_started": report.voyages_started,
         "remaining_pending": report.remaining_pending,
-    }))
+    })))
 }
 
 // ── Update ──────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct UpdateRequest {
+pub struct UpdateRequest {
     id: String,
     title: Option<String>,
     priority: Option<String>,
@@ -341,13 +343,11 @@ fn remove_flat_projection(
     }
 }
 
-pub(crate) fn handle_update(
-    payload: &[u8],
+pub(crate) fn handle_update_typed(
+    req: UpdateRequest,
     store: &mut KanbanStore,
     relations: &mut arrow_kanban::relations::RelationsStore,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let req: UpdateRequest = parse_payload(payload)?;
-
+) -> Result<KanbanReply, Vec<u8>> {
     // Verify item exists
     store
         .get_item(&req.id)
@@ -447,26 +447,27 @@ pub(crate) fn handle_update(
         updated.push("relationships_removed");
     }
 
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "id": req.id,
         "updated": updated,
         "relationships_added": added,
         "relationships_removed": removed,
-    }))
+    })))
 }
 
 // ── Comment ────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct CommentRequest {
+pub struct CommentRequest {
     id: String,
     text: String,
     agent: Option<String>,
 }
 
-pub(crate) fn handle_comment(payload: &[u8], store: &mut KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: CommentRequest = parse_payload(payload)?;
-
+pub(crate) fn handle_comment_typed(
+    req: CommentRequest,
+    store: &mut KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     // Verify item exists
     store
         .get_item(&req.id)
@@ -476,24 +477,25 @@ pub(crate) fn handle_comment(payload: &[u8], store: &mut KanbanStore) -> Result<
         .add_comment(&req.id, &req.text, req.agent.as_deref())
         .map_err(|e| error_response(&format!("{e}"), "COMMENT_FAILED"))?;
 
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "id": req.id,
         "comment": req.text,
-    }))
+    })))
 }
 
 // ── Rank ────────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct RankRequest {
+pub struct RankRequest {
     id: String,
     /// Manual rank. `Some(n)` sets it (lower = higher priority); `None` clears it.
     rank: Option<i32>,
 }
 
-pub(crate) fn handle_rank(payload: &[u8], store: &mut KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: RankRequest = parse_payload(payload)?;
-
+pub(crate) fn handle_rank_typed(
+    req: RankRequest,
+    store: &mut KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     // Verify item exists (so a typo'd ID errors instead of silently no-op'ing).
     store
         .get_item(&req.id)
@@ -503,16 +505,16 @@ pub(crate) fn handle_rank(payload: &[u8], store: &mut KanbanStore) -> Result<Vec
         .update_rank(&req.id, req.rank)
         .map_err(|e| error_response(&format!("{e}"), "RANK_FAILED"))?;
 
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "id": req.id,
         "rank": req.rank,
-    }))
+    })))
 }
 
 // ── List ────────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct ListRequest {
+pub struct ListRequest {
     status: Option<String>,
     item_type: Option<String>,
     board: Option<String>,
@@ -534,9 +536,10 @@ struct ListRequest {
     ready: bool,
 }
 
-pub(crate) fn handle_list(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: ListRequest = parse_payload(payload)?;
-
+pub(crate) fn handle_list_typed(
+    req: ListRequest,
+    store: &KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     let mut items = store.query_items(
         req.status.as_deref(),
         req.item_type.as_deref(),
@@ -626,23 +629,24 @@ pub(crate) fn handle_list(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>
     }
 
     let table = display::format_item_table(&items);
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "count": items.iter().map(|b| b.num_rows()).sum::<usize>(),
         "table": table,
-    }))
+    })))
 }
 
 // ── Show ────────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct ShowRequest {
+pub struct ShowRequest {
     id: String,
     format: Option<String>,
 }
 
-pub(crate) fn handle_show(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: ShowRequest = parse_payload(payload)?;
-
+pub(crate) fn handle_show_typed(
+    req: ShowRequest,
+    store: &KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     let item = store
         .get_item(&req.id)
         .map_err(|e| error_response(&format!("{e}"), "NOT_FOUND"))?;
@@ -650,10 +654,10 @@ pub(crate) fn handle_show(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>
     match req.format.as_deref() {
         Some("md") => {
             let md = export::item_to_markdown(&item, 0);
-            serialize_response(&serde_json::json!({
+            Ok(KanbanReply::Value(serde_json::json!({
                 "id": req.id,
                 "markdown": md,
-            }))
+            })))
         }
         Some("json") => {
             // CH-6645: the FULL item as JSON — its own fields PLUS comments (with
@@ -664,10 +668,10 @@ pub(crate) fn handle_show(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>
             let comments = store.list_comments(&req.id);
             let json_str =
                 export::export_item_json_full(&item, &comments, store.runs_batches(), &req.id);
-            serialize_response(&serde_json::json!({
+            Ok(KanbanReply::Value(serde_json::json!({
                 "id": req.id,
                 "json": json_str,
-            }))
+            })))
         }
         _ => {
             let mut detail = display::format_item_detail(&item);
@@ -675,10 +679,10 @@ pub(crate) fn handle_show(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>
             if !item_comments.is_empty() {
                 detail.push_str(&arrow_kanban::comments::format_comments(&item_comments));
             }
-            serialize_response(&serde_json::json!({
+            Ok(KanbanReply::Value(serde_json::json!({
                 "id": req.id,
                 "detail": detail,
-            }))
+            })))
         }
     }
 }
@@ -686,26 +690,31 @@ pub(crate) fn handle_show(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>
 // ── Board ───────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct BoardRequest {
+pub struct BoardRequest {
     board: Option<String>,
 }
 
-pub(crate) fn handle_board(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: BoardRequest = parse_payload(payload)?;
+pub(crate) fn handle_board_typed(
+    req: BoardRequest,
+    store: &KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     let board_name = req.board.as_deref().unwrap_or("development");
 
     let items = store.query_items(None, None, Some(board_name), None);
     let states = states_as_strings();
     let view = display::format_board_view(&items, &states);
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "board": board_name,
         "view": view,
-    }))
+    })))
 }
 
 // ── Stats ───────────────────────────────────────────────────────────────────
 
-pub(crate) fn handle_stats(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
+pub(crate) fn handle_stats_typed(
+    payload: &[u8],
+    store: &KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     // Parse optional flags from payload
     let req: serde_json::Value = serde_json::from_slice(payload).unwrap_or(serde_json::json!({}));
 
@@ -728,7 +737,9 @@ pub(crate) fn handle_stats(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8
     if velocity {
         let data = arrow_kanban::stats::compute_velocity(store.runs_batches(), weeks);
         let formatted = arrow_kanban::stats::format_velocity(&data);
-        return serialize_response(&serde_json::json!({ "stats": formatted }));
+        return Ok(KanbanReply::Value(
+            serde_json::json!({ "stats": formatted }),
+        ));
     }
 
     if burndown {
@@ -743,62 +754,67 @@ pub(crate) fn handle_stats(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8
             since_ms,
         );
         let formatted = arrow_kanban::stats::format_burndown(&data);
-        return serialize_response(&serde_json::json!({ "stats": formatted }));
+        return Ok(KanbanReply::Value(
+            serde_json::json!({ "stats": formatted }),
+        ));
     }
 
     if by_agent {
         let data = arrow_kanban::stats::compute_agent_stats(store.runs_batches());
         let formatted = arrow_kanban::stats::format_agent_stats(&data);
-        return serialize_response(&serde_json::json!({ "stats": formatted }));
+        return Ok(KanbanReply::Value(
+            serde_json::json!({ "stats": formatted }),
+        ));
     }
 
     // Default: basic stats
     let states = states_as_strings();
     let stats = display::format_stats(store.items_batches(), &states);
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "stats": stats,
-    }))
+    })))
 }
 
 // ── Delete ──────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct DeleteRequest {
+pub struct DeleteRequest {
     id: String,
 }
 
-#[derive(Serialize)]
-struct DeleteResponse {
+#[derive(Debug, Serialize)]
+pub struct DeleteResponse {
     id: String,
     deleted: bool,
 }
 
-pub(crate) fn handle_delete(payload: &[u8], store: &mut KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: DeleteRequest = parse_payload(payload)?;
-
+pub(crate) fn handle_delete_typed(
+    req: DeleteRequest,
+    store: &mut KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     store
         .delete_item(&req.id)
         .map_err(|e| error_response(&format!("{e}"), "DELETE_FAILED"))?;
 
-    serialize_response(&DeleteResponse {
+    Ok(KanbanReply::Delete(DeleteResponse {
         id: req.id,
         deleted: true,
-    })
+    }))
 }
 
 // ── Validate (HDD) ─────────────────────────────────────────────────────────
 
-pub(crate) fn handle_validate(
+pub(crate) fn handle_validate_typed(
     store: &KanbanStore,
     relations: &RelationsStore,
-) -> Result<Vec<u8>, Vec<u8>> {
+) -> Result<KanbanReply, Vec<u8>> {
     let issues = arrow_kanban::validate_hdd(store, relations);
 
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "valid": issues.is_empty(),
         "issue_count": issues.len(),
         "issues": issues,
-    }))
+    })))
 }
 
 // ── Export ───────────────────────────────────────────────────────────────────
@@ -808,7 +824,7 @@ pub(crate) fn handle_validate(
 /// `format`/`board`/`item_type`/`status` carry the board-export query + the requested
 /// format so `--format json` is honored instead of always falling back to markdown.
 #[derive(Deserialize)]
-struct ExportRequest {
+pub struct ExportRequest {
     #[serde(default)]
     id: Option<String>,
     #[serde(default)]
@@ -859,8 +875,10 @@ fn slice_batches(
     out
 }
 
-pub(crate) fn handle_export(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: ExportRequest = parse_payload(payload)?;
+pub(crate) fn handle_export_typed(
+    req: ExportRequest,
+    store: &KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     let format = req.format.as_deref().unwrap_or("item");
 
     // Single-item export — honor the requested format. Previously this ALWAYS returned
@@ -873,11 +891,11 @@ pub(crate) fn handle_export(payload: &[u8], store: &KanbanStore) -> Result<Vec<u
             "json" => ("json", export::export_json(std::slice::from_ref(&item))),
             _ => ("markdown", export::item_to_markdown(&item, 0)),
         };
-        return serialize_response(&serde_json::json!({
+        return Ok(KanbanReply::Value(serde_json::json!({
             "id": id,
             "format": out_format,
             "content": content,
-        }));
+        })));
     }
 
     // Board-wide export (no id → the client sends `id: null`). Reuses the same
@@ -913,14 +931,14 @@ pub(crate) fn handle_export(payload: &[u8], store: &KanbanStore) -> Result<Vec<u
         }
     };
     // `total`/`offset`/`count` let the client loop pages until `offset + count >= total`.
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "id": serde_json::Value::Null,
         "format": format,
         "content": content,
         "total": total,
         "offset": offset,
         "count": count,
-    }))
+    })))
 }
 
 // ── Roadmap / Critical Path / Worklist ───────────────────────────────────────
@@ -928,7 +946,7 @@ pub(crate) fn handle_export(payload: &[u8], store: &KanbanStore) -> Result<Vec<u
 // Graph computation on the server's RecordBatches — no data leaves the server.
 
 #[derive(Deserialize)]
-struct RoadmapRequest {
+pub struct RoadmapRequest {
     #[serde(default)]
     flat: bool,
     #[serde(default)]
@@ -938,16 +956,17 @@ struct RoadmapRequest {
     campaign: Option<String>,
 }
 
-pub(crate) fn handle_roadmap(
-    payload: &[u8],
+pub(crate) fn handle_roadmap_typed(
+    req: RoadmapRequest,
     store: &KanbanStore,
     relations: &RelationsStore,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let req: RoadmapRequest = parse_payload(payload)?;
+) -> Result<KanbanReply, Vec<u8>> {
     let all_batches = store.query_items(None, None, None, None);
 
     if all_batches.is_empty() {
-        return serialize_response(&serde_json::json!({ "view": "No items found.\n" }));
+        return Ok(KanbanReply::Value(
+            serde_json::json!({ "view": "No items found.\n" }),
+        ));
     }
 
     let mut items = critical_path::extract_items(&all_batches);
@@ -960,7 +979,7 @@ pub(crate) fn handle_roadmap(
     if let Some(camp_id) = &req.campaign {
         let members = relations.incoming_by_predicate(camp_id, "partOf");
         let view = critical_path::format_campaign_roadmap(camp_id, &members, &items);
-        return serialize_response(&serde_json::json!({ "view": view }));
+        return Ok(KanbanReply::Value(serde_json::json!({ "view": view })));
     }
 
     let cp = critical_path::compute_critical_path(&items)
@@ -1003,14 +1022,16 @@ pub(crate) fn handle_roadmap(
         critical_path::format_roadmap(&items, &groups, &orphans, &cp)
     };
 
-    serialize_response(&serde_json::json!({ "view": view }))
+    Ok(KanbanReply::Value(serde_json::json!({ "view": view })))
 }
 
-pub(crate) fn handle_critical_path(store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
+pub(crate) fn handle_critical_path_typed(store: &KanbanStore) -> Result<KanbanReply, Vec<u8>> {
     let all_batches = store.query_items(None, None, None, None);
 
     if all_batches.is_empty() {
-        return serialize_response(&serde_json::json!({ "view": "No items found.\n" }));
+        return Ok(KanbanReply::Value(
+            serde_json::json!({ "view": "No items found.\n" }),
+        ));
     }
 
     let items = critical_path::extract_items(&all_batches);
@@ -1018,11 +1039,11 @@ pub(crate) fn handle_critical_path(store: &KanbanStore) -> Result<Vec<u8>, Vec<u
         .map_err(|e| error_response(&e, "CYCLE_DETECTED"))?;
     let view = critical_path::format_critical_path(&items, &cp);
 
-    serialize_response(&serde_json::json!({ "view": view }))
+    Ok(KanbanReply::Value(serde_json::json!({ "view": view })))
 }
 
 #[derive(Deserialize)]
-struct WorklistRequest {
+pub struct WorklistRequest {
     #[serde(default = "default_agents")]
     agents: String,
     #[serde(default = "default_depth")]
@@ -1037,12 +1058,16 @@ pub(crate) fn default_depth() -> usize {
     3
 }
 
-pub(crate) fn handle_worklist(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: WorklistRequest = parse_payload(payload)?;
+pub(crate) fn handle_worklist_typed(
+    req: WorklistRequest,
+    store: &KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     let all_batches = store.query_items(None, None, None, None);
 
     if all_batches.is_empty() {
-        return serialize_response(&serde_json::json!({ "view": "No items found.\n" }));
+        return Ok(KanbanReply::Value(
+            serde_json::json!({ "view": "No items found.\n" }),
+        ));
     }
 
     let items = critical_path::extract_items(&all_batches);
@@ -1059,19 +1084,20 @@ pub(crate) fn handle_worklist(payload: &[u8], store: &KanbanStore) -> Result<Vec
     let worklist = critical_path::generate_worklist(&items, &cp, &agent_list, req.depth);
     let view = critical_path::format_worklist(&worklist);
 
-    serialize_response(&serde_json::json!({ "view": view }))
+    Ok(KanbanReply::Value(serde_json::json!({ "view": view })))
 }
 
 // ── Next ID ─────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct NextIdRequest {
+pub struct NextIdRequest {
     item_type: String,
 }
 
-pub(crate) fn handle_next_id(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: NextIdRequest = parse_payload(payload)?;
-
+pub(crate) fn handle_next_id_typed(
+    req: NextIdRequest,
+    store: &KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     let item_type = ItemType::from_str_loose(&req.item_type).ok_or_else(|| {
         error_response(
             &format!("Unknown item type: {}", req.item_type),
@@ -1080,15 +1106,15 @@ pub(crate) fn handle_next_id(payload: &[u8], store: &KanbanStore) -> Result<Vec<
     })?;
 
     let next = arrow_kanban::allocate_id(store.items_batches(), item_type);
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "next_id": next,
-    }))
+    })))
 }
 
 // ── History ─────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct HistoryRequest {
+pub struct HistoryRequest {
     #[serde(default)]
     week: bool,
     #[serde(default)]
@@ -1097,9 +1123,10 @@ struct HistoryRequest {
     by_assignee: Option<String>,
 }
 
-pub(crate) fn handle_history(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
-    let req: HistoryRequest = parse_payload(payload)?;
-
+pub(crate) fn handle_history_typed(
+    req: HistoryRequest,
+    store: &KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
     // Use the new filter_history when any enhanced flag is set
     if req.month || req.since.is_some() || req.by_assignee.is_some() {
         let since_ms = if let Some(ref date) = req.since {
@@ -1118,7 +1145,9 @@ pub(crate) fn handle_history(payload: &[u8], store: &KanbanStore) -> Result<Vec<
             req.by_assignee.as_deref(),
         );
         let formatted = arrow_kanban::stats::format_history_entries(&entries);
-        return serialize_response(&serde_json::json!({ "history": formatted }));
+        return Ok(KanbanReply::Value(
+            serde_json::json!({ "history": formatted }),
+        ));
     }
 
     if req.week {
@@ -1132,7 +1161,9 @@ pub(crate) fn handle_history(payload: &[u8], store: &KanbanStore) -> Result<Vec<
         } else {
             format!("Completed this week ({}):\n{}", recent.len(), table)
         };
-        serialize_response(&serde_json::json!({ "history": history }))
+        Ok(KanbanReply::Value(
+            serde_json::json!({ "history": history }),
+        ))
     } else {
         // Default: show 20 most recently completed items (not all 1000+)
         let since_ms = chrono::Utc::now().timestamp_millis() - (30 * 24 * 60 * 60 * 1000);
@@ -1148,7 +1179,9 @@ pub(crate) fn handle_history(payload: &[u8], store: &KanbanStore) -> Result<Vec<
         } else {
             arrow_kanban::stats::format_history_entries(&entries)
         };
-        serialize_response(&serde_json::json!({ "history": formatted }))
+        Ok(KanbanReply::Value(
+            serde_json::json!({ "history": formatted }),
+        ))
     }
 }
 
@@ -1227,7 +1260,7 @@ pub(crate) fn filter_recently_completed(
 
 // ── Blocked ─────────────────────────────────────────────────────────────────
 
-pub(crate) fn handle_blocked(store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
+pub(crate) fn handle_blocked_typed(store: &KanbanStore) -> Result<KanbanReply, Vec<u8>> {
     use arrow::array::{Array, BooleanArray, ListArray, StringArray};
     use arrow_kanban::schema::items_col;
 
@@ -1296,20 +1329,20 @@ pub(crate) fn handle_blocked(store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
         .collect();
 
     let table = display::format_item_table(&blocked);
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "count": blocked.iter().map(|b| b.num_rows()).sum::<usize>(),
         "table": if blocked.is_empty() {
             "No blocked items.\n".to_string()
         } else {
             format!("Blocked Items ({}):\n{}", blocked.len(), table)
         },
-    }))
+    })))
 }
 
 // ── HDD Create ──────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct HddCreateRequest {
+pub struct HddCreateRequest {
     title: String,
     #[serde(default)]
     tags: Vec<String>,
@@ -1324,14 +1357,12 @@ struct HddCreateRequest {
     experiment: Option<String>,
 }
 
-pub(crate) fn handle_hdd_create(
-    payload: &[u8],
+pub(crate) fn handle_hdd_create_typed(
+    req: HddCreateRequest,
     store: &mut KanbanStore,
     relations: &mut RelationsStore,
     item_type: ItemType,
-) -> Result<Vec<u8>, Vec<u8>> {
-    let req: HddCreateRequest = parse_payload(payload)?;
-
+) -> Result<KanbanReply, Vec<u8>> {
     // Each HDD-typed arm produces (id, body_needs_separate_update). The
     // typed helpers (create_paper/create_hypothesis/...) don't accept a
     // body, so the caller-supplied body has to be applied via update_body
@@ -1440,34 +1471,34 @@ pub(crate) fn handle_hdd_create(
         ));
     }
 
-    serialize_response(&CreateResponse {
+    Ok(KanbanReply::Create(CreateResponse {
         id,
         title: req.title,
         item_type: item_type.as_str().to_string(),
         status: "backlog".to_string(),
         relationships: Vec::new(),
-    })
+    }))
 }
 
 // ── HDD Validate ────────────────────────────────────────────────────────────
 
-pub(crate) fn handle_hdd_validate(
+pub(crate) fn handle_hdd_validate_typed(
     store: &KanbanStore,
     relations: &RelationsStore,
-) -> Result<Vec<u8>, Vec<u8>> {
+) -> Result<KanbanReply, Vec<u8>> {
     let result = arrow_kanban::validate_hdd(store, relations);
-    serialize_response(&serde_json::json!({
+    Ok(KanbanReply::Value(serde_json::json!({
         "valid": result.is_empty(),
         "issues": result,
-    }))
+    })))
 }
 
 // ── HDD Registry ────────────────────────────────────────────────────────────
 
-pub(crate) fn handle_hdd_registry(
+pub(crate) fn handle_hdd_registry_typed(
     store: &KanbanStore,
     relations: &RelationsStore,
-) -> Result<Vec<u8>, Vec<u8>> {
+) -> Result<KanbanReply, Vec<u8>> {
     let chains = arrow_kanban::build_registry(store, relations);
 
     // Manually serialize since RegistryChain doesn't derive Serialize
@@ -1493,11 +1524,16 @@ pub(crate) fn handle_hdd_registry(
         })
         .collect();
 
-    serialize_response(&serde_json::json!({ "registry": registry }))
+    Ok(KanbanReply::Value(
+        serde_json::json!({ "registry": registry }),
+    ))
 }
 
-// ── Relation Add ────────────────────────────────────────────────────────────
-pub(crate) fn handle_templates(payload: &[u8], root: &std::path::Path) -> Result<Vec<u8>, Vec<u8>> {
+// ── Templates ───────────────────────────────────────────────────────────────
+pub(crate) fn handle_templates_typed(
+    payload: &[u8],
+    root: &std::path::Path,
+) -> Result<KanbanReply, Vec<u8>> {
     let params: serde_json::Value = serde_json::from_slice(payload)
         .map_err(|e| error_response(&e.to_string(), "INVALID_JSON"))?;
 
@@ -1507,7 +1543,9 @@ pub(crate) fn handle_templates(payload: &[u8], root: &std::path::Path) -> Result
     if let Some(type_str) = params.get("item_type").and_then(|v| v.as_str()) {
         if let Some(it) = arrow_kanban::ItemType::from_str_loose(type_str) {
             let template = generator.generate(&it, "<Title>");
-            serialize_response(&serde_json::json!({ "template": template }))
+            Ok(KanbanReply::Value(
+                serde_json::json!({ "template": template }),
+            ))
         } else {
             Err(error_response(
                 &format!("Unknown item type: {type_str}"),
@@ -1525,7 +1563,7 @@ pub(crate) fn handle_templates(payload: &[u8], root: &std::path::Path) -> Result
                 })
             })
             .collect();
-        serialize_response(&serde_json::json!({ "types": types }))
+        Ok(KanbanReply::Value(serde_json::json!({ "types": types })))
     }
 }
 
@@ -1567,7 +1605,10 @@ mod ratify_tests {
 
         let payload =
             serde_json::to_vec(&serde_json::json!({ "phase_tag": "v19-phase-q" })).unwrap();
-        let resp = handle_ratify(&payload, &mut store).expect("ratify ok");
+        let req: RatifyRequest = serde_json::from_slice(&payload).unwrap();
+        let resp = handle_ratify_typed(req, &mut store)
+            .expect("ratify ok")
+            .into_bytes();
         let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
 
         assert_eq!(v["remaining_pending"], 0);
@@ -1598,11 +1639,12 @@ mod claim_tests {
             .expect("create")
     }
 
-    fn move_payload(id: &str, status: &str, assignee: &str, force: bool) -> Vec<u8> {
-        serde_json::to_vec(&serde_json::json!({
+    fn move_req(id: &str, status: &str, assignee: &str, force: bool) -> MoveRequest {
+        let payload = serde_json::to_vec(&serde_json::json!({
             "id": id, "status": status, "assignee": assignee, "force": force
         }))
-        .unwrap()
+        .unwrap();
+        serde_json::from_slice(&payload).unwrap()
     }
 
     fn assignee_of(store: &KanbanStore, id: &str) -> Option<String> {
@@ -1615,11 +1657,11 @@ mod claim_tests {
         let id = new_item(&mut store, "Contested");
 
         // Mini claims it: move succeeds AND the assignee column sticks (the CH-4905 fix).
-        assert!(handle_move(&move_payload(&id, "in_progress", "Mini", false), &mut store).is_ok());
+        assert!(handle_move_typed(move_req(&id, "in_progress", "Mini", false), &mut store).is_ok());
         assert_eq!(assignee_of(&store, &id).as_deref(), Some("Mini"));
 
         // DGX1's claim is rejected with CLAIM_CONFLICT — and the owner is unchanged.
-        let err = handle_move(&move_payload(&id, "in_progress", "DGX1", false), &mut store)
+        let err = handle_move_typed(move_req(&id, "in_progress", "DGX1", false), &mut store)
             .expect_err("cross-agent claim must be rejected");
         assert!(
             String::from_utf8_lossy(&err).contains("CLAIM_CONFLICT"),
@@ -1633,7 +1675,7 @@ mod claim_tests {
         );
 
         // --force is the audited handoff escape hatch.
-        assert!(handle_move(&move_payload(&id, "in_progress", "DGX1", true), &mut store).is_ok());
+        assert!(handle_move_typed(move_req(&id, "in_progress", "DGX1", true), &mut store).is_ok());
         assert_eq!(assignee_of(&store, &id).as_deref(), Some("DGX1"));
     }
 }
@@ -1783,7 +1825,10 @@ mod ch6742_tests {
             "unrelate": ["dependsOn:EX-1"],
         }))
         .unwrap();
-        let resp = handle_update(&payload, &mut store, &mut relations).expect("update ok");
+        let req: UpdateRequest = serde_json::from_slice(&payload).unwrap();
+        let resp = handle_update_typed(req, &mut store, &mut relations)
+            .expect("update ok")
+            .into_bytes();
         let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
 
         let deps = store.get_list_field(&id, items_col::DEPENDS_ON).unwrap();
@@ -1809,7 +1854,9 @@ mod ch6742_tests {
         let not_done_target = item_with_flat_depends(&mut store, &[]); // an active (not-done) item
         let really_blocked = item_with_flat_depends(&mut store, &[not_done_target.as_str()]);
 
-        let resp = handle_blocked(&store).expect("blocked ok");
+        let resp = handle_blocked_typed(&store)
+            .expect("blocked ok")
+            .into_bytes();
         let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
         let table = v["table"].as_str().unwrap();
 
