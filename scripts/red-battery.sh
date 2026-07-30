@@ -36,7 +36,15 @@ pass "positive control: the D1 captain pattern matches BOTH 'captain_only' and '
 #       gate that fires on the product working correctly gets switched off.
 PROV_ID_CTL='\b(CH|EX|EXP|VY|VOY|SG|PROP|EXPR|HZ|CHORE|PAPER)-[0-9]{4,}(\.[0-9]+)?\b'
 PROV_OK_CTL='\b(CH|EX|EXP|VY|VOY|SG|PROP|EXPR|HZ|CHORE|PAPER)-(42|1234|1235|1240)(\.[0-9]+)?\b'
-prov_test() { sed -E "s/$PROV_OK_CTL//g" <<<"$1" | grep -qE "$PROV_ID_CTL"; }
+prov_test() { perl -pe "s/$PROV_OK_CTL//g" <<<"$1" | grep -qE "$PROV_ID_CTL"; }
+# PORTABILITY CONTROL (CH-6876): the strip must really strip ON THIS HOST before any
+# "spared" control below means anything. Without this, every negative control passes
+# vacuously on a host whose strip is a no-op -- which is exactly how the macOS/BSD `sed`
+# divergence hid: same script, GREEN on Linux, RED on macOS, no one the wiser on either.
+[ -z "$(printf 'EXPR-1234.1' | perl -pe "s/$PROV_OK_CTL//g" 2>/dev/null)" ] \
+    || fail "allowlist strip is a NO-OP on this host — every 'spared' control below would be vacuous (CH-6876)."
+pass "portability: the allowlist strip works on this host (\\b honored)."
+
 prov_test '// CH-6109: a real citation'          || fail "provenance scan regressed: misses a real tracker citation."
 prov_test '// e.g. EX-1234 shows the format'     && fail "provenance scan regressed: fires on a synthetic doc example."
 prov_test '    let b = items(&["EXP-1", "VY-8"]);' && fail "provenance scan regressed: fires on test fixture IDs."
@@ -53,7 +61,7 @@ pass "positive controls: provenance scan catches citations, spares the ID gramma
 #   (b) it MUST NOT catch bare ID data (what the product legitimately stores and asserts on).
 # The four negative controls are real shapes lifted from this tree, not invented ones.
 PROSE_CTL="([a-z]{2,} +$PROV_ID_CTL|\"$PROV_ID_CTL[: ]+[A-Za-z])"
-prose_test() { sed -E "s/$PROV_OK_CTL//g" <<<"$1" | grep -qE "$PROSE_CTL"; }
+prose_test() { perl -pe "s/$PROV_OK_CTL//g" <<<"$1" | grep -qE "$PROSE_CTL"; }
 prose_test 'eprintln!("degraded; see HZ-6053.");'        || fail "(b5) regressed: misses a printed citation."
 prose_test '"git operations planned for VY-3009 Phase 2"' || fail "(b5) regressed: misses a citation in user-facing prose."
 prose_test '        "id": "EX-3001",'                     && fail "(b5) regressed: fires on bare fixture data."
@@ -74,6 +82,17 @@ prose_test 'format!("EX-3001 requires review")' \
     || fail "(b5) regressed: misses a leading citation followed by prose."
 prose_test 'let t = ("EX-3001", "title");'                && fail "(b5) regressed: fires on a bare fixture tuple."
 pass "positive controls: (b5) catches printed citations (mid-string AND leading) and spares five real fixture shapes."
+# CH-6864 — pin the documented title-fixture TRADE, both halves. Shape (ii) fires on a
+# title-shaped fixture in the real ID range; the allowlist strip is what spares one written
+# with the synthetic numbers. If either half silently changed, the documented convention in
+# export-gate.sh would become false without anything going red.
+prose_test 'let title = "EX-3001 Test Item";' \
+    || fail "(b5) trade changed: a real-range title fixture no longer fires — export-gate.sh's documented trade is now wrong."
+prose_test 'let title = "EX-1234 Test Item";' \
+    && fail "(b5) mitigation BROKEN: a synthetic-number title fixture is no longer spared by the allowlist strip."
+pass "positive controls: the documented (b5) title-fixture trade holds in both directions."
+
+
 
 # helper: inject, assert the gate goes RED, restore, and confirm the file is byte-identical.
 # CH-6863: the injection tally is COUNTED here, never written by hand. The summary line used

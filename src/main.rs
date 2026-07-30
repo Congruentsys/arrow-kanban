@@ -304,6 +304,12 @@ enum Commands {
         /// How many items deep per agent (default: 3)
         #[arg(long, default_value = "3")]
         depth: usize,
+        /// Agent capabilities for capability-aware routing, as
+        /// `Agent=cap1,cap2;Agent2=cap3`. An item tagged `<cap>-required` is routed
+        /// only to agents that list `<cap>`. This is consumer policy — the engine
+        /// has no built-in roster. Default: none (no capability constraints).
+        #[arg(long, default_value = "")]
+        capabilities: String,
     },
 
     /// Show blocked items
@@ -1796,7 +1802,11 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
             }
         }
 
-        Commands::Worklist { agents, depth } => {
+        Commands::Worklist {
+            agents,
+            depth,
+            capabilities,
+        } => {
             let all_batches = store.query_items(None, None, None, None);
             if all_batches.is_empty() {
                 println!("No items found.");
@@ -1809,7 +1819,12 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 } else {
                     agents.split(',').map(|s| s.trim().to_string()).collect()
                 };
-                let worklist = critical_path::generate_worklist(&items, &cp, &agent_list, depth);
+                let routing = critical_path::CapabilityRouting {
+                    item_requirements: critical_path::item_requirements_from_batches(&all_batches),
+                    agent_capabilities: critical_path::parse_agent_capabilities(&capabilities),
+                };
+                let worklist =
+                    critical_path::generate_worklist(&items, &cp, &agent_list, &routing, depth);
                 print!("{}", critical_path::format_worklist(&worklist));
             }
         }
@@ -2753,9 +2768,13 @@ fn command_to_nats(command: &Commands) -> (String, serde_json::Value) {
             serde_json::json!({ "flat": flat, "ready": ready, "campaign": campaign }),
         ),
         Commands::CriticalPath => ("critical-path".to_string(), serde_json::json!({})),
-        Commands::Worklist { agents, depth } => (
+        Commands::Worklist {
+            agents,
+            depth,
+            capabilities,
+        } => (
             "worklist".to_string(),
-            serde_json::json!({ "agents": agents, "depth": depth }),
+            serde_json::json!({ "agents": agents, "depth": depth, "capabilities": capabilities }),
         ),
         Commands::Blocked => ("blocked".to_string(), serde_json::json!({})),
         Commands::Validate {

@@ -1048,6 +1048,12 @@ pub struct WorklistRequest {
     agents: String,
     #[serde(default = "default_depth")]
     depth: usize,
+    /// Agent capabilities for capability-aware routing, as `Agent=cap1,cap2;Agent2=cap3`
+    /// (same wire format as the CLI `--capabilities` flag). An item tagged
+    /// `<cap>-required` is routed only to agents that provide `<cap>`. Consumer policy;
+    /// default empty = no capability constraints.
+    #[serde(default)]
+    capabilities: String,
 }
 
 pub(crate) fn default_agents() -> String {
@@ -1081,7 +1087,11 @@ pub(crate) fn handle_worklist_typed(
             .map(|s| s.trim().to_string())
             .collect()
     };
-    let worklist = critical_path::generate_worklist(&items, &cp, &agent_list, req.depth);
+    let routing = critical_path::CapabilityRouting {
+        item_requirements: critical_path::item_requirements_from_batches(&all_batches),
+        agent_capabilities: critical_path::parse_agent_capabilities(&req.capabilities),
+    };
+    let worklist = critical_path::generate_worklist(&items, &cp, &agent_list, &routing, req.depth);
     let view = critical_path::format_worklist(&worklist);
 
     Ok(KanbanReply::Value(serde_json::json!({ "view": view })))
