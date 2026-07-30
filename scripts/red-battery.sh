@@ -52,7 +52,7 @@ pass "positive controls: provenance scan catches citations, spares the ID gramma
 #   (a) it MUST catch an ID sitting in prose (what a user reads);
 #   (b) it MUST NOT catch bare ID data (what the product legitimately stores and asserts on).
 # The four negative controls are real shapes lifted from this tree, not invented ones.
-PROSE_CTL="[a-z]{2,} +$PROV_ID_CTL"
+PROSE_CTL="([a-z]{2,} +$PROV_ID_CTL|\"$PROV_ID_CTL[: ]+[A-Za-z])"
 prose_test() { sed -E "s/$PROV_OK_CTL//g" <<<"$1" | grep -qE "$PROSE_CTL"; }
 prose_test 'eprintln!("degraded; see HZ-6053.");'        || fail "(b5) regressed: misses a printed citation."
 prose_test '"git operations planned for VY-3009 Phase 2"' || fail "(b5) regressed: misses a citation in user-facing prose."
@@ -60,11 +60,29 @@ prose_test '        "id": "EX-3001",'                     && fail "(b5) regresse
 prose_test '.add_comment("EX-3244", "agent", "x", None)'  && fail "(b5) regressed: fires on a fixture argument."
 prose_test 'let b = items(&["EX-1300","CH-1301"]);'       && fail "(b5) regressed: fires on a fixture array."
 prose_test 'assert_eq!(req.id.as_deref(), Some("CH-6443"));' && fail "(b5) regressed: fires on a fixture assertion."
-pass "positive controls: (b5) catches printed citations and spares all four real fixture shapes."
+# CH-6863 — LEADING-POSITION citations. The original (b5) required a lowercase word BEFORE
+# the ID, so a citation opening a printed string was invisible: the gate could not see the
+# very line PR #7 removed ("HZ-6053 INVARIANT VIOLATED ...", write_durability_acceptance.rs:128).
+# A net blind to its own motivating case reads as coverage it does not have. The
+# discriminator is what FOLLOWS the ID: prose continues (space/colon then a letter),
+# whereas fixture data closes its quote immediately -> "EX-3001".
+prose_test '        "HZ-6053 INVARIANT VIOLATED - the server acked {} write(s)"' \
+    || fail "(b5) regressed: misses a citation OPENING a printed string (the line-128 shape)."
+prose_test 'println!("CH-6109: use the new flag");' \
+    || fail "(b5) regressed: misses the leading 'ID: explanation' form."
+prose_test 'format!("EX-3001 requires review")' \
+    || fail "(b5) regressed: misses a leading citation followed by prose."
+prose_test 'let t = ("EX-3001", "title");'                && fail "(b5) regressed: fires on a bare fixture tuple."
+pass "positive controls: (b5) catches printed citations (mid-string AND leading) and spares five real fixture shapes."
 
 # helper: inject, assert the gate goes RED, restore, and confirm the file is byte-identical.
+# CH-6863: the injection tally is COUNTED here, never written by hand. The summary line used
+# to carry a literal ("all 11 injections RED"); adding a vector silently made it wrong, and a
+# tally that drifts is the same reads-as-coverage failure this battery exists to prevent.
+INJECTIONS=0
 mutate_expect_red() {
     local desc="$1" file="$2" inject="$3" bak
+    INJECTIONS=$((INJECTIONS + 1))
     bak=$(mktemp)
     cp "$file" "$bak"
     printf '%s' "$inject" >> "$file"
@@ -87,7 +105,11 @@ mutate_expect_red "upstream CLI alias in a comment"               server/src/lib
 mutate_expect_red "upstream contributor guide in a comment"       server/src/lib.rs   $'\n// see CLAUDE.md for the guardrail\n'
 mutate_expect_red "PRINTED alias leak (string literal)"           server/src/lib.rs   $'\nfn h() -> String { format!("nk update {} --assign x", 1) }\n'
 mutate_expect_red "PRINTED tracker citation (string literal)"     server/src/lib.rs   $'\nfn g() { eprintln!("degraded; see HZ-6053."); }\n'
+# CH-6863 — the LEADING-POSITION variant, injected end-to-end (not just regex-tested above).
+# This is the shape write_durability_acceptance.rs:128 actually had, and the one the original
+# (b5) could not see.
+mutate_expect_red "PRINTED tracker citation, ID-FIRST (CH-6863)" server/src/lib.rs   $'\nfn i() { panic!("HZ-6053 INVARIANT VIOLATED - write lost"); }\n'
 
 # final: tree restored + gate green again.
 "${GATE[@]}" >/dev/null 2>&1 || fail "gate is not green after restore — a mutation leaked."
-echo "✅ [red-battery] all 11 injections RED; clean tree green; positive controls hold."
+echo "✅ [red-battery] all $INJECTIONS injections RED; clean tree green; positive controls hold."
