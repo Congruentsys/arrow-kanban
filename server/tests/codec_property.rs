@@ -21,7 +21,7 @@
 //! both sides, which cannot fail on a broken codec. The golden is an independent
 //! artifact captured BEFORE this refactor existed, so a codec change now has to
 //! justify itself against bytes it did not produce: corrupting `into_bytes`
-//! turns this test RED (verified by mutation, EX-6805 review fix).
+//! turns this test RED (verified by mutation).
 //!
 //! The one intrinsically non-deterministic response field — `relation.add`'s
 //! random `relation_id` UUID, minted identically down the old and new paths — is

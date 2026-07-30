@@ -9,7 +9,7 @@
 //!
 //! This is a behavior-preserving refactor of the former string-dispatch that
 //! lived in `handlers::dispatch`: the wire bytes are byte-identical. The
-//! admission gate + persist-or-degrade flow (CH-6056 / HZ-6053) is replicated
+//! admission gate + persist-or-degrade flow is replicated
 //! verbatim inside [`KanbanEngine::apply`].
 //!
 //! The command set is a *closed, exhaustive* enum: [`KanbanCommand::verb_str`],
@@ -414,7 +414,7 @@ pub struct KanbanEngine {
     pub store: KanbanStore,
     pub relations: RelationsStore,
     pub data_dir: PathBuf,
-    /// Write-durability gate (CH-6056): refuses mutations when the store is not
+    /// Write-durability gate: refuses mutations when the store is not
     /// accepting durable writes, instead of acking writes a restart would lose.
     pub health: HealthGate,
 }
@@ -452,7 +452,7 @@ impl KanbanEngine {
         let is_mut = cmd.is_mutation();
         let is_rel_mut = cmd.is_relation_mutation();
 
-        // (a) CH-6056: admit mutations BEFORE they touch memory. Once the store
+        // (a) Admit mutations BEFORE they touch memory. Once the store
         // is not durable, refusing up front leaves nothing to roll back. Reads
         // are deliberately unaffected: a degraded board is still worth reading.
         if is_mut
@@ -473,7 +473,7 @@ impl KanbanEngine {
         // (b) run the command's logic.
         let result = self.route(cmd);
 
-        // (c) CH-6056 / HZ-6053: a persist failure is NOT a warning to step over.
+        // (c) A persist failure is NOT a warning to step over.
         // The mutation is in memory but not on disk, so report the failure to the
         // caller instead of acking a write we could not keep, and degrade the gate
         // so the NEXT mutation is refused before it ever touches memory.
