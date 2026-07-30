@@ -569,7 +569,7 @@ impl KanbanEngine {
             C::GitStubDetail(verb) => Ok(KanbanReply::Value(serde_json::json!({
                 "detail": format!(
                     "git.{}: operates on local graph store. Use --store to specify path. \
-                     Server-side git operations planned for VY-3009 Phase 2.",
+                     Server-side git operations are planned for a future release.",
                     verb.strip_prefix("git.").unwrap_or(verb)
                 ),
             }))),
