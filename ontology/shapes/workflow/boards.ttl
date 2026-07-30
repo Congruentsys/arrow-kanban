@@ -1,13 +1,13 @@
 # boards.ttl — SHACL WIP limit constraints for dev and research boards
 #
-# EX-3220 Phase 1: Board-Level WIP Shapes
+# Board-Level WIP Shapes
 #
 # SPARQLConstraints that fire when WIP limits are exceeded.
-# Advisory-only in v1 — shown as warnings by `nk validate`, not blockers.
-# The SPARQL is DATA (not code) — `nk validate` implements evaluation.
+# Advisory-only in v1 — shown as warnings by `arrow-kanban validate`, not blockers.
+# The SPARQL is DATA (not code) — `arrow-kanban validate` implements evaluation.
 #
 # V12/V13 equivalent: .arrow-kanban/config.yaml wip_limits section
-# What's new: inspectable SHACL constraints, queryable via `nk shapes`
+# What's new: inspectable SHACL constraints, queryable via `arrow-kanban shapes`
 
 @prefix kb:   <https://congruentsys.org/ns/arrow-kanban/kanban/> .
 @prefix sh:   <http://www.w3.org/ns/shacl#> .

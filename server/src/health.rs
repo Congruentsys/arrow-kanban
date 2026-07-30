@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Write-durability gate (CH-6056 / HZ-6053).
+//! Write-durability gate.
 //!
 //! # Why this exists
 //!
@@ -9,7 +9,7 @@
 //! Warning: failed to persist store after pr.merge: No space left on device
 //! ```
 //!
-//! ...while still returning success to the client. During HZ-6053 that ran for
+//! ...while still returning success to the client. In the motivating incident that ran for
 //! days. Agents were told their `create`/`move`/`merge` had succeeded, the
 //! server served the correct state from memory, and the divergence stayed
 //! invisible until a restart silently reverted the board by two months.
@@ -152,7 +152,7 @@ impl HealthGate {
             Ok(())
         })();
         // Always clean up, even on failure — a partial canary must not become
-        // the orphaned .tmp that CH-6055 then quarantines.
+        // the orphaned .tmp that recovery then quarantines.
         let _ = std::fs::remove_file(&path);
         result
     }
@@ -173,7 +173,7 @@ impl HealthGate {
     /// in-memory state — there is nothing to roll back.
     pub fn admit_mutation(&mut self, data_dir: &Path) -> Result<(), String> {
         if !self.is_degraded() {
-            // A healthy store admits without a per-request probe. CH-6114: we do NOT canary
+            // A healthy store admits without a per-request probe. We do NOT canary
             // every healthy mutation to pre-close the "first failure of an episode lands in
             // memory" window — a 64 KiB probe passing does not prove a multi-MB parquet save
             // will (lossy proxy), so it would add a per-write fsync without the guarantee. The
@@ -224,8 +224,7 @@ impl HealthGate {
             // Not a Warning. The store is diverging from disk.
             eprintln!(
                 "kanban: 🔴 ENTERING DEGRADED MODE — {reason}. Mutations will be REFUSED; reads \
-                 continue. Writes are not durable, and a restart would discard in-memory state. \
-                 See HZ-6053."
+                 continue. Writes are not durable, and a restart would discard in-memory state."
             );
             self.health = Health::Degraded {
                 reason,
@@ -264,7 +263,7 @@ mod tests {
     }
 
     /// The canary must not leave litter — otherwise it becomes the orphaned
-    /// .tmp that CH-6055's recovery then quarantines on every restart.
+    /// .tmp that recovery then quarantines on every restart.
     #[test]
     fn probe_leaves_no_litter() {
         let dir = tempfile::tempdir().expect("tempdir");

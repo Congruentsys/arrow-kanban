@@ -42,7 +42,7 @@
 //! arrow-kanban restore snapshot-2026-04-07_055839
 //! ```
 //!
-//! EX-4010
+//! Backup and restore.
 
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};

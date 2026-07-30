@@ -41,7 +41,7 @@ pub type Result<T> = std::result::Result<T, HddError>;
 /// Result of creating a research item — includes ID and any auto-created relations.
 #[derive(Debug)]
 pub struct HddCreateResult {
-    /// The allocated ID (e.g., "H1300.1", "EXPR-1300.1", "PAPER-1300").
+    /// The allocated ID (e.g., "H1234.1", "EXPR-1234.1", "PAPER-1234").
     pub id: String,
     /// IDs of auto-created relations.
     pub auto_links: Vec<String>,
@@ -111,7 +111,7 @@ fn allocate_experiment_id(batches: &[RecordBatch], paper_num: u32) -> String {
     format!("EXPR-{}.{}", paper_num, max_seq + 1)
 }
 
-/// Extract the paper number from a paper ID like "PAPER-1300".
+/// Extract the paper number from a paper ID like "PAPER-1234".
 #[cfg(test)]
 fn parse_paper_num(paper_id: &str) -> Option<u32> {
     paper_id.strip_prefix("PAPER-")?.parse::<u32>().ok()
@@ -199,7 +199,7 @@ pub fn create_hypothesis(
 
 /// Create an experiment linked to a hypothesis.
 ///
-/// ID format: EXPR-{paper_num}.{seq} (e.g., EXPR-131.1, EXPR-131.2).
+/// ID format: EXPR-{paper_num}.{seq} (e.g., EXPR-1234.1).
 /// The paper_num is derived from the hypothesis ID (e.g., H131.1 → paper 131).
 /// Auto-links: experiment → hypothesis via "validates" predicate.
 ///
@@ -242,7 +242,7 @@ pub fn create_experiment(
         body: None,
     };
 
-    // Use create_item_with_id for paper-scoped IDs (EXPR-131.1 format)
+    // Use create_item_with_id for paper-scoped IDs (EXPR-1234.1 format)
     let id = store.create_item_with_id(&expr_id, &input)?;
 
     // Auto-link experiment → hypothesis

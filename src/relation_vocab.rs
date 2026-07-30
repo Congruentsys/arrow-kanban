@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! The typed relationship vocabulary (CH-6109).
+//! The typed relationship vocabulary.
 //!
 //! # Why this exists
 //!
@@ -7,7 +7,7 @@
 //! comment already named `implements` / `spawns` / `blocks` — the graph was designed. But
 //! nothing reached it: `relations.parquet` never existed on disk, no CLI command called
 //! `add_relation`, and all real relationship data lived in two flat, untyped list columns
-//! (`items.related`, `items.depends_on`) that `nk create` could not even set.
+//! (`items.related`, `items.depends_on`) that `arrow-kanban create` could not even set.
 //!
 //! So an H→M→EXPR research trio was wired with `--related`, which discards **direction**
 //! and **kind**: you could not ask *"which experiment validates this hypothesis?"* without
@@ -55,7 +55,7 @@ const PAPER: &[&str] = &["paper"];
 const EXPERIMENT: &[&str] = &["experiment"];
 const MEASURE: &[&str] = &["measure"];
 
-/// The compiled-in FALLBACK vocabulary (EX-6245).
+/// The compiled-in FALLBACK vocabulary.
 ///
 /// The runtime source of truth is `ontology/kanban.ttl` (embedded via `include_str!`,
 /// parsed once at first use — see [`predicates`]). This const exists ONLY as the
@@ -133,7 +133,7 @@ const FALLBACK_PREDICATES: &[Predicate] = &[
         // The ontology declares Measure → Experiment, but `/hypothesize` links measures to
         // the HYPOTHESIS. Rather than canonise one and silently invalidate existing
         // practice, both targets are accepted — the mismatch is real and documented in
-        // CH-6109 for a follow-up ruling, not resolved by fiat here.
+        // left for a follow-up ruling, not resolved by fiat here.
         range: &["experiment", "hypothesis"],
         inverse: None,
         doc: "a measure tracks the outcome of an experiment (or, per current practice, a hypothesis)",
@@ -141,7 +141,7 @@ const FALLBACK_PREDICATES: &[Predicate] = &[
 ];
 
 /// The kanban ontology, compiled into the binary — the single source of truth for the
-/// edge vocabulary (EX-6245). Embedding (rather than a runtime path) means the data file
+/// edge vocabulary. Embedding (rather than a runtime path) means the data file
 /// travels with every installed binary and "file not found" is impossible; the project /
 /// user override files the ontology header describes are deliberately NOT consulted for
 /// the EDGE VOCABULARY — a local override could silently open validate_edge, violating
@@ -442,7 +442,7 @@ pub fn parse_spec(spec: &str) -> Option<(&str, &str)> {
 
 /// Whether a predicate's edges are ALSO projected into the flat `items.related` /
 /// `items.depends_on` columns, so existing readers (`roadmap`, `critical-path`,
-/// `worklist`, `nk show`) keep working unchanged.
+/// `worklist`, `arrow-kanban show`) keep working unchanged.
 pub fn flat_column_for(predicate: &str) -> Option<&'static str> {
     match lookup(predicate)?.name {
         "related" => Some("related"),
@@ -646,7 +646,7 @@ mod tests {
     fn ids_resolve_to_types_by_prefix() {
         assert_eq!(type_from_id("EX-6109"), Some("expedition"));
         assert_eq!(type_from_id("VY-5855"), Some("voyage"));
-        // EX-6249: CA- (campaign) must resolve, else partOf:CA-XXXX against an
+        // CA- (campaign) must resolve, else partOf:CA-XXXX against an
         // unresolvable target types as None and range validation silently skips.
         assert_eq!(type_from_id("CA-6256"), Some("campaign"));
         assert_eq!(type_from_id("CH-1"), Some("chore"));
@@ -654,18 +654,18 @@ mod tests {
         assert_eq!(type_from_id("EXPR-6073"), Some("experiment"));
         assert_eq!(type_from_id("M-6072"), Some("measure"));
         assert_eq!(type_from_id("PAPER-122"), Some("paper"));
-        // CH-6308: FT (Feature) was missing — an unresolvable FT-XXXX target typed as None,
+        // FT (Feature) was missing — an unresolvable FT-XXXX target typed as None,
         // silently SKIPPING range validation (the DGX1-caught CA class of hole). Now covered.
         assert_eq!(type_from_id("FT-6256"), Some("feature"));
         assert_eq!(type_from_id("FEAT-1"), Some("feature")); // legacy prefix too
         assert_eq!(type_from_id("WAT-1"), None);
     }
 
-    /// CH-6308 (structural guard against the NEXT such gap): every board item type's canonical
+    /// Structural guard against the NEXT such gap: every board item type's canonical
     /// `prefix()` must resolve through `type_from_id` back to that type. `type_from_id` is the
     /// fallback typer for edge targets the store cannot resolve; a prefix with no arm types as
     /// `None` and range validation silently skips (FT was the latest instance; CA was DGX1's on
-    /// EX-6249). Iterating `DEV ∪ RESEARCH` means a newly-added ItemType (e.g. Campaign) turns
+    /// variant). Iterating `DEV ∪ RESEARCH` means a newly-added ItemType (e.g. Campaign) turns
     /// this RED until its `type_from_id` arm is added — the gap can't ship silently again.
     #[test]
     fn every_item_type_prefix_round_trips_through_type_from_id() {
@@ -703,9 +703,9 @@ mod tests {
         }
     }
 
-    // ── EX-6245: the .ttl is the source of truth; the const is a fail-closed fallback ──
+    // ── The .ttl is the source of truth; the const is a fail-closed fallback ──
 
-    /// The EX-6245 acceptance test, relaxed by EX-6246 from strict equality to
+    /// The acceptance test, later relaxed from strict equality to
     /// fallback ⊆ loaded: every compiled-fallback predicate must appear in the `.ttl`
     /// with identical (domain, range, inverse) — so the original nine can never drift
     /// silently — while the `.ttl` may GROW data-only predicates (`partOf`/`hasMember`
@@ -735,9 +735,9 @@ mod tests {
         }
     }
 
-    // ── EX-6246: the vocabulary grows by editing DATA — the open-graph property ──
+    // ── The vocabulary grows by editing DATA — the open-graph property ──
 
-    /// The EX-6246 acceptance test: `partOf`/`hasMember` exist ONLY in `kanban.ttl`
+    /// Acceptance test: `partOf`/`hasMember` exist ONLY in `kanban.ttl`
     /// — not in the compiled fallback — yet validate, look up, and inverse-resolve
     /// exactly like the compiled nine. This is add-a-relation-via-data-only working.
     #[test]
@@ -771,8 +771,8 @@ mod tests {
         );
         // Unknown predicates are still refused — loading MORE never opened the vocab.
         assert!(validate_edge("memberOfCampaign", "VY-1", "voyage", "VY-2", None).is_err());
-        // Explicit decision (EX-6246 constraint): partOf does NOT auto-project into a
-        // flat items column — no current consumer reads one, and EX-6250's rollup
+        // Explicit design decision: partOf does NOT auto-project into a
+        // flat items column — no current consumer reads one, and the campaign rollup
         // traverses the typed edges.
         assert_eq!(flat_column_for("partOf"), None);
         assert_eq!(flat_column_for("hasMember"), None);
@@ -848,18 +848,18 @@ mod tests {
         assert_eq!(v[0].name, "rel");
     }
 
-    // ── EX-6247: single-source-of-truth guards + back-compat by construction ──────
+    // ── Single-source-of-truth guards + back-compat by construction ──────
 
-    /// EX-6247 guard (structural sanity): every domain/range entry of every LOADED
+    /// Guard (structural sanity): every domain/range entry of every LOADED
     /// predicate must name a real [`ItemType`]. A typo'd class in the `.ttl`
     /// (`kb:Expeditionn`) would otherwise create a DEAD constraint — an edge no item
     /// type can ever satisfy — silently.
     ///
-    /// Iterates `DEV ∪ RESEARCH` (the same auto-covering shape as CH-6308's
+    /// Iterates `DEV ∪ RESEARCH` (the same auto-covering shape as the item-type guard's
     /// round-trip guard), so a future ItemType is known here the moment it joins a
     /// board — no hand-list to update. The original `campaign` ahead-of-code
-    /// allowlist was tightened away once EX-6249 landed the enum variant (the
-    /// PROP-3554/3555 cross-review agreement).
+    /// allowlist was tightened away once the enum variant landed (the
+    /// cross-review agreement).
     #[test]
     fn every_ttl_domain_and_range_names_a_real_item_type() {
         let known: Vec<&str> = ItemType::DEV
@@ -883,7 +883,7 @@ mod tests {
         }
     }
 
-    /// EX-6247 guard (no divergent second copy): the loader deliberately reads ONLY
+    /// Guard (no divergent second copy): the loader deliberately reads ONLY
     /// the embedded ontology (see [`KANBAN_TTL`]), so a `.arrow-kanban/ontology/`
     /// copy would be dead data — and a DIVERGENT dead copy is worse: the next reader
     /// trusts whichever they open first. No such copy exists today (this asserts
@@ -903,10 +903,10 @@ mod tests {
         }
     }
 
-    /// EX-6247 back-compat, pinned BY CONSTRUCTION rather than by a point-in-time
+    /// Back-compat, pinned BY CONSTRUCTION rather than by a point-in-time
     /// store sweep — the three links of the argument, each checkable:
     ///
-    /// 1. FLAT edges (`items.related`/`items.depends_on`, the entire pre-CH-6109
+    /// 1. FLAT edges (`items.related`/`items.depends_on`, the entire pre-typed-edge
     ///    population) resolve to loaded predicates that are UNCONSTRAINED
     ///    (any→any) — so no stored flat edge can fail domain/range under the loaded
     ///    vocab, ever. (This test.)
@@ -918,7 +918,7 @@ mod tests {
     ///    resolves the CLI spellings stored histories may reference.
     ///
     /// (A live-store sweep was considered and rejected: typed edges currently have
-    /// NO CLI read surface — flagged on VY-6244 — and flat edges are proven safe
+    /// NO CLI read surface — flagged during review — and flat edges are proven safe
     /// here more strongly than any sample could.)
     #[test]
     fn stored_edges_cannot_be_invalidated_by_the_loaded_vocab() {

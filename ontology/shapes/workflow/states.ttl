@@ -1,10 +1,10 @@
 # states.ttl — SHACL valid-status constraints for all 12 item types
 #
-# EX-3220 Phase 2: Per-Type Valid Status Shapes
+# Per-Type Valid Status Shapes
 #
 # Encodes which status values are valid for each type using sh:in.
 # This is the machine-readable equivalent of state_machine.rs valid-state checks.
-# Advisory in v1 — `nk validate` reads these and warns on violations.
+# Advisory in v1 — `arrow-kanban validate` reads these and warns on violations.
 #
 # V12/V13 equivalent: state_machine.rs (imperative Rust logic)
 # What's new: constraints as queryable data, not hardcoded code

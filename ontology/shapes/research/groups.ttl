@@ -2,7 +2,7 @@
 #
 # Property groups define the section headers used in template generation.
 # Each group has an rdfs:label that becomes the ## heading when
-# nk templates generates a body template.
+# arrow-kanban templates generates a body template.
 #
 # Shared group: kb:TurtleBlockGroup — used by hypothesis, experiment, paper,
 # measure, and literature (5 of 6 research types).

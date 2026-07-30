@@ -25,7 +25,7 @@ pub type Result<T> = std::result::Result<T, IdAllocError>;
 
 /// Scan batches to find the maximum numeric ID for a given prefix.
 ///
-/// E.g., for prefix "EXP", scans IDs like "EXP-1257" and returns 1257.
+/// E.g., for prefix "EXP", scans IDs like "EXP-1234" and returns 1234.
 /// Returns 0 if no items with that prefix exist.
 pub fn max_id_for_prefix(batches: &[RecordBatch], prefix: &str) -> u32 {
     let mut max_id = 0u32;
@@ -44,7 +44,7 @@ pub fn max_id_for_prefix(batches: &[RecordBatch], prefix: &str) -> u32 {
             }
             let id_str = ids.value(i);
             if let Some(num_str) = id_str.strip_prefix(&prefix_dash) {
-                // Handle dotted IDs like "EXPR-131.1" — take the integer part
+                // Handle dotted IDs like "EXPR-1234.1" — take the integer part
                 let num_part = num_str.split('.').next().unwrap_or(num_str);
                 if let Ok(num) = num_part.parse::<u32>()
                     && num > max_id
@@ -64,7 +64,7 @@ pub fn max_id_for_type(batches: &[RecordBatch], prefix: &str) -> u32 {
 }
 
 /// Global counter floor — ensures IDs start at 1300+ (continuous with
-/// file-era history where the highest was ~EXP-1294).
+/// file-era history where the highest was ~EXP-1234).
 const GLOBAL_ID_BASE: u32 = 1299;
 
 /// Find the global maximum numeric ID across ALL item types.
@@ -91,9 +91,9 @@ pub fn global_max_id(batches: &[RecordBatch]) -> u32 {
 /// Allocate the next ID for a given item type.
 ///
 /// Uses a SINGLE GLOBAL COUNTER across all types. The number is unique
-/// regardless of type — `EX-1305` and `CH-1305` cannot both exist.
+/// regardless of type — `EX-1234` and `CH-1234` cannot both exist.
 ///
-/// Returns the full ID string (e.g., "EX-1300").
+/// Returns the full ID string (e.g., "EX-1234").
 pub fn allocate_id(batches: &[RecordBatch], item_type: ItemType) -> String {
     let prefix = item_type.prefix();
     let next = global_max_id(batches).max(GLOBAL_ID_BASE) + 1;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! TTL-based theme system — maps type URIs to display labels.
 //!
-//! EX-3224: Themes control how item types are displayed (nautical: "Expedition",
+//! Themes control how item types are displayed (nautical: "Expedition",
 //! agile: "Story", standard: "Work Item") without changing the underlying type URIs
 //! or SHACL shapes.
 //!
@@ -108,7 +108,7 @@ impl Theme {
         names
     }
 
-    /// Format theme for display (nk themes show <name>).
+    /// Format theme for display (arrow-kanban themes show <name>).
     pub fn format_display(&self) -> String {
         let mut lines = Vec::new();
         lines.push(format!("Theme: {}", self.name));

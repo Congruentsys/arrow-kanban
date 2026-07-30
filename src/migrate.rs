@@ -230,7 +230,7 @@ pub fn migrate_boards(root: &Path, config: &ConfigFile) -> Result<MigrateResult>
     }
 
     // Deduplicate IDs — if two files share the same id: field, append a .N suffix
-    // to subsequent occurrences (e.g., EXP-1179 → EXP-1179.1). No data is lost.
+    // to subsequent occurrences (e.g., EXP-1234 → EXP-1234.1). No data is lost.
     // Runs and relations are left pointing to the original ID since we can't
     // distinguish which file they came from after parsing.
     let mut seen_ids: HashMap<String, usize> = HashMap::new();
@@ -827,7 +827,7 @@ fn dedup_yaml_keys(yaml: &str) -> String {
 
 /// Infer item type from the ID prefix when `type:` is missing from frontmatter.
 /// Many older items (pre-V11) don't have a `type:` field but follow the
-/// convention `EXP-123`, `CHORE-045`, `VOY-10`, etc.
+/// convention `EXP-1234`, `CHORE-1234`, `VOY-42`, etc.
 fn infer_type_from_id(id: &str) -> Option<ItemType> {
     let upper = id.to_uppercase();
     // Accept both old (EXP-) and new (EX-) prefixes, plus dash/underscore separators
@@ -905,7 +905,7 @@ fn normalize_status(raw: &str, board_name: &str) -> String {
         // Hypotheses with these in frontmatter should be "active" (the hypothesis
         // itself is still active — the experiment validated/refuted it per-version).
         // (A legacy epistemic-status alias was dropped from the open crate's
-        //  migrator here; VY-6695 E2 closed-vocab scrub, EX-6699 memo §4.)
+        //  migrator here; see the closed-vocabulary scrub notes.)
         "validated" | "confirmed" => "active".to_string(),
         "refuted" => "active".to_string(),
 
@@ -1033,7 +1033,7 @@ related: [VOY-145, EXP-41]
 depends_on: [EXP-40]
 ---
 
-# EXP-42: Test Expedition
+# Test Expedition
 
 Some body content here.
 "#,
@@ -1362,7 +1362,7 @@ related: [EXP-2]
 depends_on: []
 ---
 
-# EXP-1: First Expedition
+# First Expedition
 
 Body content.
 
@@ -1395,7 +1395,7 @@ related: []
 depends_on: [EXP-1]
 ---
 
-# EXP-2: Second Expedition
+# Second Expedition
 
 Another body.
 "#,

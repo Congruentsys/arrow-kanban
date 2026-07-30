@@ -1,12 +1,12 @@
 # terminal.ttl — SHACL terminal state + resolution constraints
 #
-# EX-3220 Phase 3: Terminal State + Resolution Shapes
+# Terminal State + Resolution Shapes
 #
 # Items in terminal states (done, complete, abandoned, retired) must have
 # a resolution set. Advisory in v1.
 #
 # V12/V13 equivalent: state_machine.rs resolution validation
-# What's new: constraint as SHACL data, inspectable via `nk shapes`
+# What's new: constraint as SHACL data, inspectable via `arrow-kanban shapes`
 
 @prefix kb:   <https://congruentsys.org/ns/arrow-kanban/kanban/> .
 @prefix sh:   <http://www.w3.org/ns/shacl#> .

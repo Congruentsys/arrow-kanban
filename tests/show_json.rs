@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! CH-6645 — `nk show <ID> --format json` emits the FULL item: its own fields
+//! `show <ID> --format json` emits the FULL item: its own fields
 //! PLUS comments (with timestamps) PLUS status-history transitions. This is what
 //! makes the FA-E3 time-to-orient measure (claim transition → first work artifact)
 //! computable from the CLI. Tests the server-side rendering
@@ -78,7 +78,7 @@ fn show_json_carries_status_history_and_comments_with_timestamps() {
     assert!(first_artifact_at > 0);
     assert_eq!(cmts[0]["author"], serde_json::json!("Air"));
 
-    // 5. THE point (EX-6643): time_to_orient = first-artifact − claim is now
+    // 5. THE point: time_to_orient = first-artifact − claim is now
     //    computable from the JSON alone.
     assert!(
         first_artifact_at >= claim_at,

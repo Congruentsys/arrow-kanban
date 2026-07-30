@@ -1,8 +1,8 @@
 # kanban.ttl — Core OWL Ontology for arrow-kanban
 #
 # Defines the class hierarchy and property vocabulary for all 13 arrow-kanban
-# item types. This is the foundational ontology that SHACL shapes (EX-3218/3219/3220)
-# and the template system (EX-3221) depend on.
+# item types. This is the foundational ontology that SHACL shapes
+# and the template system depend on.
 #
 # Namespace: kb: <https://congruentsys.org/ns/arrow-kanban/kanban/>
 #
@@ -186,7 +186,7 @@ kb:tags a owl:DatatypeProperty ;
 # Relation object properties
 # (correspond to predicate values in the Arrow relations RecordBatch)
 #
-# THIS SECTION IS THE RUNTIME EDGE VOCABULARY (EX-6245 / VY-6244): arrow-kanban
+# THIS SECTION IS THE RUNTIME EDGE VOCABULARY: arrow-kanban
 # loads these owl:ObjectProperty declarations at startup and validates every
 # `--relate` edge against them. rdfs:domain/rdfs:range are enforced
 # (kb:Item = any item type); owl:inverseOf declares the derived inverse (only
@@ -208,7 +208,7 @@ kb:dependsOn a owl:ObjectProperty ;
     rdfs:label "dependsOn" ;
     rdfs:comment "this item is BLOCKED BY the target (the existing --depends-on)" .
 
-# Referenced by the SHACL shapes; previously only in the compiled const (CH-6109).
+# Referenced by the SHACL shapes; previously only in the compiled const.
 kb:blocks a owl:ObjectProperty ;
     rdfs:domain kb:Item ;
     rdfs:range kb:Item ;
@@ -216,22 +216,22 @@ kb:blocks a owl:ObjectProperty ;
     rdfs:label "blocks" ;
     rdfs:comment "this item BLOCKS the target (inverse of dependsOn; stored one way only)" .
 
-# Referenced by the SHACL shapes; previously only in the compiled const (CH-6109).
+# Referenced by the SHACL shapes; previously only in the compiled const.
 kb:parent a owl:ObjectProperty ;
     rdfs:domain kb:Item ;
     rdfs:range kb:Item ;
     rdfs:label "parent" ;
     rdfs:comment "hierarchical containment — this item is contained by the target" .
 
-# Campaign membership (EX-6246 / VY-6248): a member item is part of a larger
-# grouping node — the predicate the Campaign type (EX-6249) and the rollup view
-# (EX-6250) traverse. Added by editing THIS FILE ONLY — no Rust vocabulary
-# change — proving the open-graph property of the EX-6245 data-driven loader.
+# Campaign membership: a member item is part of a larger
+# grouping node — the predicate the Campaign type and the rollup view
+# traverse. Added by editing THIS FILE ONLY — no Rust vocabulary
+# change — proving the open-graph property of the data-driven loader.
 # Distinct from kb:parent (informal containment, no inverse): partOf/hasMember
 # is the queryable membership pair. Domain/range are kb:Item (any→any) because
 # membership crosses types (voyage→campaign today; research groupings later);
 # deliberately NOT projected to a flat items column — no current consumer
-# (roadmap/critical-path/worklist) reads it, and EX-6250 reads the typed edges.
+# (roadmap/critical-path/worklist) reads it, and the campaign rollup reads the typed edges.
 kb:partOf a owl:ObjectProperty ;
     rdfs:domain kb:Item ;
     rdfs:range kb:Item ;
@@ -275,7 +275,7 @@ kb:validates a owl:ObjectProperty ;
 # The ontology's canonical range is kb:Experiment, but `/hypothesize` links
 # measures to the HYPOTHESIS. The comma-list below is read by the loader as a
 # UNION (either target accepted) — deliberately mirroring live practice pending
-# the CH-6109 follow-up ruling, exactly as the retired const did. (Strict OWL
+# the follow-up ruling, exactly as the retired const did. (Strict OWL
 # would intersect multiple rdfs:range triples; this file trades that formality
 # for not silently invalidating existing edges.)
 kb:measures a owl:ObjectProperty ;
