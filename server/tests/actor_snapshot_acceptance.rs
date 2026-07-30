@@ -23,6 +23,7 @@ use arrow_kanban_server::actor;
 use arrow_kanban_server::engine::KanbanEngine;
 use arrow_kanban_server::events::MutationEvent;
 use arrow_kanban_server::health::HealthGate;
+use arrow_kanban_server::lease::Epoch;
 use arrow_kanban_server::storage::{CommittedEvent, LoadedState, Seq, StorageBackend, StoreError};
 
 fn json(bytes: &[u8]) -> serde_json::Value {
@@ -54,6 +55,7 @@ impl StorageBackend for FailBackend {
         &mut self,
         _store: &KanbanStore,
         _relations: &RelationsStore,
+        _epoch: Epoch,
         _event: &MutationEvent,
     ) -> Result<Seq, StoreError> {
         // The barrier fails: nothing is committed, the seq never advances.

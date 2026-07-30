@@ -28,6 +28,7 @@ use crate::handlers::core::{
 };
 use crate::handlers::relations::{RelationAddRequest, RelationQueryRequest};
 use crate::health::HealthGate;
+use crate::lease::{LocalWriterLease, WriterLease};
 use crate::storage::{CommittedEvent, ParquetBackend, Seq, StorageBackend, StoreError};
 use arrow_kanban::crud::KanbanStore;
 use arrow_kanban::item_type::ItemType;
@@ -426,14 +427,15 @@ fn parse_req<T: for<'de> serde::Deserialize<'de>>(payload: &[u8]) -> Result<T, K
     crate::handlers::parse_payload(payload).map_err(KanbanReply::from_error_bytes)
 }
 
-/// The stores + write-durability gate + durable [`StorageBackend`] — the whole
-/// server semantics.
+/// The stores + write-durability gate + durable [`StorageBackend`] + writer lease
+/// — the whole server semantics.
 ///
-/// Generic over the backend so a consumer swaps durability by construction; PR-2
-/// ships only [`ParquetBackend`] (the default). Reads and writes both go through
-/// the synchronous [`apply`](Self::apply); there is no queue, actor, or replica
-/// here (that is later PR work).
-pub struct KanbanEngine<B: StorageBackend = ParquetBackend> {
+/// Generic over the backend so a consumer swaps durability by construction, and
+/// over the [`WriterLease`] so a deployment swaps its lease authority by
+/// construction. Both default to the shipped types ([`ParquetBackend`],
+/// [`LocalWriterLease`]), so `KanbanEngine` alone is the single-canonical-server
+/// engine. Reads and writes both go through the synchronous [`apply`](Self::apply).
+pub struct KanbanEngine<B: StorageBackend = ParquetBackend, L: WriterLease = LocalWriterLease> {
     pub store: KanbanStore,
     pub relations: RelationsStore,
     pub data_dir: PathBuf,
@@ -442,12 +444,17 @@ pub struct KanbanEngine<B: StorageBackend = ParquetBackend> {
     pub health: HealthGate,
     /// The durable commit boundary + outbox source.
     pub backend: B,
+    /// The writer lease. At the commit boundary the engine fences itself if a
+    /// newer writer has taken the lease (a higher current epoch); the epoch it
+    /// holds is stamped on every commit.
+    pub lease: L,
 }
 
-impl KanbanEngine<ParquetBackend> {
-    /// Construct over the default [`ParquetBackend`] rooted at `data_dir`. The
-    /// backend discovers its committed high-water seq from any existing commit
-    /// log (0 for a fresh store); a store dir that cannot be scanned starts at 0.
+impl KanbanEngine<ParquetBackend, LocalWriterLease> {
+    /// Construct over the default [`ParquetBackend`] rooted at `data_dir`, taking
+    /// the default [`LocalWriterLease`] at the store directory. The backend
+    /// discovers its committed high-water seq from any existing commit log (0 for
+    /// a fresh store); a store dir that cannot be scanned starts at 0.
     pub fn new(
         store: KanbanStore,
         relations: RelationsStore,
@@ -463,9 +470,10 @@ impl KanbanEngine<ParquetBackend> {
     }
 }
 
-impl<B: StorageBackend> KanbanEngine<B> {
+impl<B: StorageBackend> KanbanEngine<B, LocalWriterLease> {
     /// Construct over an explicit backend (a fault-injecting double in tests, a
-    /// future durability backend in production).
+    /// future durability backend in production) and the default
+    /// [`LocalWriterLease`], acquired at the store directory.
     pub fn with_backend(
         store: KanbanStore,
         relations: RelationsStore,
@@ -473,12 +481,34 @@ impl<B: StorageBackend> KanbanEngine<B> {
         health: HealthGate,
         backend: B,
     ) -> Self {
+        // Acquire at the data ROOT (which already exists — it is `--data-dir`),
+        // NOT the `.arrow-kanban` store dir. The store dir is created lazily by the
+        // first commit; pre-creating it here to hold the lease would change the
+        // durability-fault semantics (a store dir that exists + is writable while
+        // the root is read-only would let a write land that must be refused).
+        let lease = LocalWriterLease::acquire(&data_dir);
+        Self::with_backend_and_lease(store, relations, data_dir, health, backend, lease)
+    }
+}
+
+impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
+    /// Construct over an explicit backend AND an explicit writer lease — the fully
+    /// generic constructor a deployment (or a test) uses to swap either seam.
+    pub fn with_backend_and_lease(
+        store: KanbanStore,
+        relations: RelationsStore,
+        data_dir: PathBuf,
+        health: HealthGate,
+        backend: B,
+        lease: L,
+    ) -> Self {
         Self {
             store,
             relations,
             data_dir,
             health,
             backend,
+            lease,
         }
     }
 
@@ -528,6 +558,40 @@ impl<B: StorageBackend> KanbanEngine<B> {
             );
         }
 
+        // (a2) FENCE a stale writer BEFORE the mutation touches memory. If a newer
+        // writer has taken the lease (a current epoch higher than the one this
+        // engine holds), refuse — even though this engine still holds a live
+        // handle. Checking here, alongside the health-gate admission, is what makes
+        // a fenced mutation truly NOT applied: `route` never runs, nothing is
+        // appended to `_events.log`, no event is emitted, and the committed seq
+        // does not advance. The epoch this engine DOES hold is stamped on the
+        // commit below, so the durable log records the producing writer generation.
+        if is_mut {
+            match self.lease.is_current() {
+                Ok(true) => {}
+                Ok(false) => {
+                    return KanbanReply::error(
+                        &format!(
+                            "'{verb}' was REFUSED — this writer is FENCED: a newer writer holds the \
+                             lease (the epoch moved past the one this process holds). Your change \
+                             was NOT applied and is NOT durable. Re-acquire the lease before writing."
+                        ),
+                        "WRITER_FENCED",
+                    );
+                }
+                Err(e) => {
+                    return KanbanReply::error(
+                        &format!(
+                            "'{verb}' was REFUSED — the writer lease could not be verified ({e}); \
+                             refusing to commit rather than risk a split-brain write. No change was \
+                             applied."
+                        ),
+                        "WRITER_FENCED",
+                    );
+                }
+            }
+        }
+
         // Keep the decoded command alive across routing so the committed event
         // can be derived from `(command, reply)` — the reply carries the
         // allocated id / prior status a checkpoint replay needs.
@@ -555,7 +619,7 @@ impl<B: StorageBackend> KanbanEngine<B> {
                     let commit = match &event {
                         Some(ev) => self
                             .backend
-                            .commit(&self.store, &self.relations, ev)
+                            .commit(&self.store, &self.relations, self.lease.epoch(), ev)
                             .map_err(|e| e.to_string()),
                         None => Err(format!(
                             "'{verb}' mutated state but produced no event — refusing to ack an \

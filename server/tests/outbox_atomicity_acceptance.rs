@@ -28,6 +28,7 @@ use arrow_kanban::relations::RelationsStore;
 use arrow_kanban_server::engine::KanbanEngine;
 use arrow_kanban_server::events::{CreatedEvent, MutationEvent};
 use arrow_kanban_server::health::HealthGate;
+use arrow_kanban_server::lease::Epoch;
 use arrow_kanban_server::storage::{
     CommittedEvent, LoadedState, ParquetBackend, Seq, StorageBackend, StoreError,
 };
@@ -58,6 +59,7 @@ impl StorageBackend for FaultBackend {
         &mut self,
         _store: &KanbanStore,
         _relations: &RelationsStore,
+        epoch: Epoch,
         event: &MutationEvent,
     ) -> Result<Seq, StoreError> {
         if self.fail_commit {
@@ -69,6 +71,7 @@ impl StorageBackend for FaultBackend {
         let seq = self.committed_seq + 1;
         self.committed.push(CommittedEvent {
             seq,
+            epoch,
             event: event.clone(),
         });
         self.committed_seq = seq;
@@ -205,7 +208,7 @@ fn a_commit_pairs_its_event_with_its_checkpoint() {
         .expect("seed store");
     let relations = RelationsStore::new();
     let seq = backend
-        .commit(&store, &relations, &created("CH-1"))
+        .commit(&store, &relations, 1, &created("CH-1"))
         .expect("commit");
     assert_eq!(seq, 1);
 
@@ -245,7 +248,7 @@ fn a_checkpoint_that_cannot_be_written_rolls_its_event_back() {
         .create_item_with_id("CH-1", &input("CH-1"))
         .expect("seed");
     backend
-        .commit(&store, &relations, &created("CH-1"))
+        .commit(&store, &relations, 1, &created("CH-1"))
         .expect("first commit");
 
     // Fault: the store dir is now read-only. The append to the EXISTING log
@@ -257,7 +260,7 @@ fn a_checkpoint_that_cannot_be_written_rolls_its_event_back() {
         .create_item_with_id("CH-2", &input("CH-2"))
         .expect("seed 2");
     let err = backend
-        .commit(&store, &relations, &created("CH-2"))
+        .commit(&store, &relations, 1, &created("CH-2"))
         .expect_err("checkpoint must fail under the fault");
     set_writable(&store_dir, true);
 
@@ -302,11 +305,11 @@ fn negative_control_a_writable_checkpoint_commits_the_second_event() {
 
     store.create_item_with_id("CH-1", &input("CH-1")).unwrap();
     backend
-        .commit(&store, &relations, &created("CH-1"))
+        .commit(&store, &relations, 1, &created("CH-1"))
         .unwrap();
     store.create_item_with_id("CH-2", &input("CH-2")).unwrap();
     backend
-        .commit(&store, &relations, &created("CH-2"))
+        .commit(&store, &relations, 1, &created("CH-2"))
         .expect("second commit lands when the store is writable");
 
     assert_eq!(backend.committed_seq(), 2);
@@ -331,11 +334,11 @@ fn a_torn_checkpoint_is_recovered_by_replaying_the_log_tail() {
     // Two clean commits: checkpoint + log both reflect seq 2.
     store.create_item_with_id("CH-1", &input("CH-1")).unwrap();
     backend
-        .commit(&store, &relations, &created("CH-1"))
+        .commit(&store, &relations, 1, &created("CH-1"))
         .unwrap();
     store.create_item_with_id("CH-2", &input("CH-2")).unwrap();
     backend
-        .commit(&store, &relations, &created("CH-2"))
+        .commit(&store, &relations, 1, &created("CH-2"))
         .unwrap();
 
     // NEGATIVE CONTROL (the torn state genuinely differs): a load NOW recovers
@@ -390,11 +393,11 @@ fn a_committed_but_unpublished_event_re_publishes_after_a_restart() {
 
     store.create_item_with_id("CH-1", &input("CH-1")).unwrap();
     backend
-        .commit(&store, &relations, &created("CH-1"))
+        .commit(&store, &relations, 1, &created("CH-1"))
         .unwrap();
     store.create_item_with_id("CH-2", &input("CH-2")).unwrap();
     let k = backend
-        .commit(&store, &relations, &created("CH-2"))
+        .commit(&store, &relations, 1, &created("CH-2"))
         .expect("commit");
     assert_eq!(k, 2);
 
