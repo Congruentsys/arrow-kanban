@@ -536,6 +536,21 @@ pub fn group_by_voyage(items: &[ItemInfo]) -> (Vec<VoyageGroup>, Vec<String>) {
 
 // ─── Worklist ───────────────────────────────────────────────────────────────
 
+/// Distinct assignees present on the board (excluding the `unassigned` sentinel and
+/// blanks), sorted. This is the generic worklist agent set when the caller passes no
+/// `--agents` filter — the open engine derives the roster from the DATA, never a
+/// hardcoded fleet list.
+pub fn agents_from_items(items: &[ItemInfo]) -> Vec<String> {
+    let mut seen: Vec<String> = items
+        .iter()
+        .map(|i| i.assignee.trim().to_string())
+        .filter(|a| !a.is_empty() && a != "unassigned")
+        .collect();
+    seen.sort();
+    seen.dedup();
+    seen
+}
+
 /// Generate agent work assignments based on ready items and current assignments.
 pub fn generate_worklist(
     items: &[ItemInfo],

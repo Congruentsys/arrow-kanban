@@ -1030,7 +1030,7 @@ struct WorklistRequest {
 }
 
 pub(crate) fn default_agents() -> String {
-    "DGX,M5,Mini".into()
+    String::new()
 }
 
 pub(crate) fn default_depth() -> usize {
@@ -1048,11 +1048,14 @@ pub(crate) fn handle_worklist(payload: &[u8], store: &KanbanStore) -> Result<Vec
     let items = critical_path::extract_items(&all_batches);
     let cp = critical_path::compute_critical_path(&items)
         .map_err(|e| error_response(&e, "CYCLE_DETECTED"))?;
-    let agent_list: Vec<String> = req
-        .agents
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect();
+    let agent_list: Vec<String> = if req.agents.trim().is_empty() {
+        critical_path::agents_from_items(&items)
+    } else {
+        req.agents
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    };
     let worklist = critical_path::generate_worklist(&items, &cp, &agent_list, req.depth);
     let view = critical_path::format_worklist(&worklist);
 

@@ -765,8 +765,6 @@ mod tests {
         assert!(summary.contains("All items conform"));
     }
 
-    // ── Ratification body⇔tag consistency (CH-6502) ─────────────────────────
-
     #[test]
     fn test_format_board_summary_with_violations() {
         let mut store = KanbanStore::new();

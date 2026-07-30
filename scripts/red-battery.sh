@@ -48,7 +48,8 @@ mutate_expect_red "D1 gate identifier -> server/src"               server/src/li
 mutate_expect_red "D1 fleet vocab (captain_only) -> server/src"    server/src/lib.rs   $'\n// tier: captain_only\n'
 mutate_expect_red "closed-crate dep -> server/Cargo.toml"          server/Cargo.toml   $'\nnusy-graph-review = "0.15"\n'
 mutate_expect_red "monorepo path-escape dep -> server/Cargo.toml"  server/Cargo.toml   $'\nx = { path = "../nusy-product-team/crates/x" }\n'
+mutate_expect_red "fleet-roster list -> server/src"                server/src/lib.rs   $'\n// default agents: DGX,M5,Mini\n'
 
 # final: tree restored + gate green again.
 "${GATE[@]}" >/dev/null 2>&1 || fail "gate is not green after restore — a mutation leaked."
-echo "✅ [red-battery] all 5 injections RED; clean tree green; positive controls hold."
+echo "✅ [red-battery] all 6 injections RED; clean tree green; positive controls hold."

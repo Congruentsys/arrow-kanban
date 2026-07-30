@@ -45,6 +45,18 @@ if [ -n "$d1hits" ]; then
     fail "D1 move-inward concept (Captain-rank / pending-ratification GATE / decision-ledger / training) found in the open tree (above) — these belong in fleet composition (nusy-agenda), not the open engine. Tags-as-opaque-strings are fine; the enforcement gate is not."
 fi
 
+# ── (b3) Fleet-roster scan (E2 review, Air finding) ─────────────────────────
+# A hardcoded comma-list of the fleet's agent names (e.g. a `--agents` default of
+# "DGX,M5,Mini") is fleet-specific data — the open engine derives agents from board
+# DATA. A SINGLE agent name as an assignee VALUE is fine (opaque data), so match a
+# comma/semicolon-separated list of TWO+ roster names, never a lone name.
+ROSTER='\b(DGX[12]?|M5|Mini|Air)\b *[,;] *\b(DGX[12]?|M5|Mini|Air)\b'
+rosterhits=$(grep -rniE "$ROSTER" $SCAN_DIRS 2>/dev/null | grep -vE 'export-gate|red-battery' || true)
+if [ -n "$rosterhits" ]; then
+    echo "$rosterhits" | head -20 >&2
+    fail "a hardcoded fleet-roster list (two+ agent names comma-separated) is in the open tree (above) — the open engine derives agents from board DATA, never a baked-in roster."
+fi
+
 # ── (c) No board-content or research/eval data ───────────────────────────────
 # Persisted board state (Parquet), the runtime data dir, and research/eval
 # corpora are instance data, not the tool — they must never be committed.
@@ -82,7 +94,7 @@ done
 # ── (d) License scan ─────────────────────────────────────────────────────────
 [ -f LICENSE ] || fail "LICENSE file is missing."
 grep -qi 'MIT License' LICENSE || fail "LICENSE is not MIT."
-missing_spdx=$(for f in $(git ls-files 'src/*.rs' 'tests/*.rs' 2>/dev/null); do
+missing_spdx=$(for f in $(git ls-files 'src/*.rs' 'tests/*.rs' 'server/src/*.rs' 'server/tests/*.rs' 2>/dev/null); do
     head -1 "$f" | grep -q 'SPDX-License-Identifier: MIT' || echo "$f"
 done)
 if [ -n "$missing_spdx" ]; then

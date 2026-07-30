@@ -298,8 +298,8 @@ enum Commands {
 
     /// Show agent work assignments based on dependency readiness
     Worklist {
-        /// Agent names (comma-separated). Default: DGX,M5,Mini
-        #[arg(long, default_value = "DGX,M5,Mini")]
+        /// Agent names (comma-separated). Default: every assignee on the board.
+        #[arg(long, default_value = "")]
         agents: String,
         /// How many items deep per agent (default: 3)
         #[arg(long, default_value = "3")]
@@ -1804,8 +1804,11 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 let items = critical_path::extract_items(&all_batches);
                 let cp = critical_path::compute_critical_path(&items)
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-                let agent_list: Vec<String> =
-                    agents.split(',').map(|s| s.trim().to_string()).collect();
+                let agent_list: Vec<String> = if agents.trim().is_empty() {
+                    critical_path::agents_from_items(&items)
+                } else {
+                    agents.split(',').map(|s| s.trim().to_string()).collect()
+                };
                 let worklist = critical_path::generate_worklist(&items, &cp, &agent_list, depth);
                 print!("{}", critical_path::format_worklist(&worklist));
             }
