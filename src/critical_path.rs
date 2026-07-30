@@ -551,11 +551,113 @@ pub fn agents_from_items(items: &[ItemInfo]) -> Vec<String> {
     seen
 }
 
+// ─── Capability-aware routing ────────────────────────────────────────────────
+
+/// Tag-grammar suffix that declares a required capability: a tag `"<cap>-required"`
+/// means the item requires the capability `"<cap>"` (e.g. `"gpu-required"` → `"gpu"`).
+/// The engine fixes only this *grammar* — never the capability NAMES, and never any
+/// agent/node name. Which capabilities exist, and which agents provide them, is
+/// consumer policy (e.g. a fleet routes `gpu-required` work to its GPU nodes).
+pub const CAPABILITY_TAG_SUFFIX: &str = "-required";
+
+/// Generic capability-routing configuration consumed by [`generate_worklist`].
+///
+/// * `item_requirements` — item id → capabilities that item needs to be worked.
+/// * `agent_capabilities` — agent → capabilities that agent provides.
+///
+/// Both halves are supplied by the CONSUMER. The engine assigns no meaning to any
+/// specific capability or agent; it only enforces the generic rule *"withhold an
+/// item from an agent that does not provide every capability the item requires."*
+/// An empty config imposes no constraints (every item routes to every agent), so
+/// the [`Default`] is a routing no-op. This replaced a hardcoded
+/// `assignee == <node-name>` worklist rule: the specific `gpu-required`→GPU-node
+/// mapping is now consumer policy, never baked into the open engine.
+#[derive(Debug, Clone, Default)]
+pub struct CapabilityRouting {
+    pub item_requirements: HashMap<String, Vec<String>>,
+    pub agent_capabilities: HashMap<String, HashSet<String>>,
+}
+
+impl CapabilityRouting {
+    /// `true` if `agent` may be assigned `item_id` — i.e. it provides every
+    /// capability the item requires. An item with no requirement routes to anyone;
+    /// an item that requires a capability no configured agent provides is withheld
+    /// from everyone (it waits for a capable agent to be configured). That is the
+    /// intended generic semantics — the consumer owns the agent-capability map.
+    pub fn agent_can_take(&self, item_id: &str, agent: &str) -> bool {
+        match self.item_requirements.get(item_id) {
+            None => true,
+            Some(reqs) if reqs.is_empty() => true,
+            Some(reqs) => match self.agent_capabilities.get(agent) {
+                Some(provided) => reqs.iter().all(|c| provided.contains(c)),
+                None => false,
+            },
+        }
+    }
+}
+
+/// Parse the capabilities an item requires from its tags via the `<cap>-required`
+/// convention (see [`CAPABILITY_TAG_SUFFIX`]). `["gpu-required", "v20"]` → `["gpu"]`.
+/// An empty result means the item imposes no capability requirement.
+pub fn required_capabilities_from_tags(tags: &[String]) -> Vec<String> {
+    tags.iter()
+        .filter_map(|t| t.trim().strip_suffix(CAPABILITY_TAG_SUFFIX))
+        .filter(|c| !c.is_empty())
+        .map(|c| c.to_string())
+        .collect()
+}
+
+/// Parse a flat `Agent=cap1,cap2;Agent2=cap3` spec into the agent→capabilities map.
+/// A convenience for consumers that carry the config as a string (a CLI flag, a NATS
+/// request); it bakes in no roster or capability names — only the `;`/`=`/`,` grammar.
+pub fn parse_agent_capabilities(spec: &str) -> HashMap<String, HashSet<String>> {
+    let mut map = HashMap::new();
+    for entry in spec.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some((agent, caps)) = entry.split_once('=') {
+            let set: HashSet<String> = caps
+                .split(',')
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .map(String::from)
+                .collect();
+            map.insert(agent.trim().to_string(), set);
+        }
+    }
+    map
+}
+
+/// Build the `item_requirements` half of a [`CapabilityRouting`] from the board's
+/// items, reading each item's tags. The consumer combines this with its own
+/// agent-capability policy to complete the routing config.
+pub fn item_requirements_from_batches(batches: &[RecordBatch]) -> HashMap<String, Vec<String>> {
+    let mut reqs = HashMap::new();
+    for batch in batches {
+        let ids = col_str(batch, items_col::ID);
+        let tags_col = batch
+            .column(items_col::TAGS)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .expect("tags column");
+        for i in 0..batch.num_rows() {
+            let tags = extract_list_values(tags_col, i);
+            let caps = required_capabilities_from_tags(&tags);
+            if !caps.is_empty() {
+                reqs.insert(ids.value(i).to_string(), caps);
+            }
+        }
+    }
+    reqs
+}
+
 /// Generate agent work assignments based on ready items and current assignments.
+///
+/// `routing` supplies capability-aware routing (generic — no hardcoded roster); pass
+/// [`CapabilityRouting::default`] for no capability constraints.
 pub fn generate_worklist(
     items: &[ItemInfo],
     cp: &CriticalPathResult,
     agents: &[String],
+    routing: &CapabilityRouting,
     depth_limit: usize,
 ) -> Vec<WorklistEntry> {
     let item_map: HashMap<&str, &ItemInfo> = items.iter().map(|i| (i.id.as_str(), i)).collect();
@@ -599,8 +701,10 @@ pub fn generate_worklist(
                     if info.assignee != "-" && info.assignee != *agent {
                         return false;
                     }
-                    // Check if DGX-only (has gpu/cuda tags or assigned to DGX)
-                    if info.assignee == "DGX" && *agent != "DGX" {
+                    // Capability-aware routing: withhold work whose required
+                    // capabilities this agent does not provide. Generic — no
+                    // hardcoded node names; the consumer supplies the map.
+                    if !routing.agent_can_take(&info.id, agent) {
                         return false;
                     }
                     true
@@ -664,7 +768,8 @@ pub fn generate_worklist(
                     if info.assignee != "-" && info.assignee != *agent {
                         continue;
                     }
-                    if info.assignee == "DGX" && *agent != "DGX" {
+                    // Capability-aware routing (see the ready-items filter above).
+                    if !routing.agent_can_take(&info.id, agent) {
                         continue;
                     }
                     // Check if this will unblock after current agent work completes
@@ -1437,13 +1542,121 @@ mod tests {
         let items = make_items();
         let cp = compute_critical_path(&items).unwrap();
         let agents = vec!["DGX".to_string(), "M5".to_string(), "Mini".to_string()];
-        let worklist = generate_worklist(&items, &cp, &agents, 3);
+        let worklist = generate_worklist(&items, &cp, &agents, &CapabilityRouting::default(), 3);
 
         assert_eq!(worklist.len(), 3);
         // DGX should get EX-2 (assigned to DGX)
         let dgx = &worklist[0];
         assert_eq!(dgx.agent, "DGX");
         assert!(dgx.items.iter().any(|i| i.id == "EX-2"));
+    }
+
+    // ─── CH-6824: generic capability-aware worklist routing ─────────────────────
+
+    /// Capability-tagged work is routed ONLY to agents that provide the required
+    /// capability — the generic replacement for the removed hardcoded `assignee ==
+    /// "DGX"` rule. Node names here are deliberately synthetic (`node-a`/`node-b`) to
+    /// prove the engine keys off a capability predicate, not any fleet roster.
+    #[test]
+    fn worklist_routes_capability_tagged_work_only_to_capable_agents() {
+        let items = vec![ItemInfo {
+            id: "EX-CAP".into(),
+            title: "needs the accel capability".into(),
+            item_type: "expedition".into(),
+            status: "backlog".into(),
+            priority: "high".into(),
+            assignee: "-".into(),
+            related: vec![],
+            depends_on: vec![],
+            rank: None,
+        }];
+        let cp = compute_critical_path(&items).unwrap();
+        let agents = vec!["node-a".to_string(), "node-b".to_string()];
+
+        // node-a provides "accel"; node-b provides nothing.
+        let mut agent_capabilities: HashMap<String, HashSet<String>> = HashMap::new();
+        agent_capabilities.insert("node-a".to_string(), HashSet::from(["accel".to_string()]));
+        let routing = CapabilityRouting {
+            item_requirements: HashMap::from([("EX-CAP".to_string(), vec!["accel".to_string()])]),
+            agent_capabilities,
+        };
+
+        let worklist = generate_worklist(&items, &cp, &agents, &routing, 3);
+        let node_a = worklist.iter().find(|e| e.agent == "node-a").unwrap();
+        let node_b = worklist.iter().find(|e| e.agent == "node-b").unwrap();
+
+        assert!(
+            node_a.items.iter().any(|i| i.id == "EX-CAP"),
+            "a capable agent MUST be routed capability-tagged work"
+        );
+        assert!(
+            !node_b.items.iter().any(|i| i.id == "EX-CAP"),
+            "a non-capable agent must NOT be routed capability-tagged work"
+        );
+
+        // Control: with no routing config the same item routes to everyone
+        // (capability routing is opt-in; the default is a no-op).
+        let open = generate_worklist(&items, &cp, &agents, &CapabilityRouting::default(), 3);
+        assert!(
+            open.iter()
+                .all(|e| e.items.iter().any(|i| i.id == "EX-CAP")),
+            "with no capability config the item routes to every agent"
+        );
+    }
+
+    /// The `<cap>-required` tag grammar yields the capability names (and nothing else).
+    #[test]
+    fn required_capabilities_parses_the_required_suffix_grammar() {
+        let tags = vec![
+            "gpu-required".to_string(),
+            "v20".to_string(),
+            "cuda-required".to_string(),
+            "-required".to_string(), // empty prefix → not a capability
+        ];
+        let caps = required_capabilities_from_tags(&tags);
+        assert_eq!(caps, vec!["gpu".to_string(), "cuda".to_string()]);
+    }
+
+    /// The flat `Agent=cap,cap;...` spec (CLI flag / NATS request) parses to the
+    /// agent→capabilities map, tolerating whitespace and empty/blank entries.
+    #[test]
+    fn parse_agent_capabilities_reads_the_flat_spec() {
+        let map = parse_agent_capabilities(" node-a = gpu, cuda ; node-b = ; ");
+        assert_eq!(
+            map.get("node-a"),
+            Some(&HashSet::from(["gpu".to_string(), "cuda".to_string()]))
+        );
+        // `node-b=` → present with an empty capability set.
+        assert_eq!(map.get("node-b"), Some(&HashSet::new()));
+        assert_eq!(map.len(), 2);
+        assert!(parse_agent_capabilities("").is_empty());
+    }
+
+    /// Closed-vocabulary grep-guard (mirrors the FOSS export-gate discipline): the
+    /// generic engine's PRODUCTION routing logic must hardcode NO fleet/node name.
+    /// Roster→capability policy lives in the consumer, never here. Test fixtures
+    /// below the `#[cfg(test)]` marker legitimately use real names, so only the
+    /// production region (before that marker) is scanned. Reintroducing the old
+    /// `assignee == "DGX"` rule turns this RED — exactly as the export gate blocks
+    /// brand/vocab leaks into the open tree.
+    #[test]
+    fn engine_routing_hardcodes_no_roster_names() {
+        let src = include_str!("critical_path.rs");
+        let production = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("source has a production region before the test module");
+        const FORBIDDEN: &[&str] = &[
+            "DGX", "DGX1", "DGX2", "M5", "Mini", "Air", "negaDGX", "negaM5", "negaMini",
+        ];
+        for name in FORBIDDEN {
+            let needle = format!("\"{name}\"");
+            assert!(
+                !production.contains(needle.as_str()),
+                "hardcoded roster name {needle} found in the generic engine's production \
+                 code — route on a capability predicate, not a node name (CH-6824)"
+            );
+        }
     }
 
     #[test]
