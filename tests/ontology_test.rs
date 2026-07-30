@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Tests for crates/arrow-kanban/ontology/kanban.ttl
 //!
-//! EX-3217: kanban.ttl — Core OWL Ontology for All 12 Item Types
+//! kanban.ttl — Core OWL Ontology for All 12 Item Types
 //!
 //! Validates that the ontology file:
 //! - exists and is readable (required for SHACL shapes to load it)
@@ -235,7 +235,7 @@ fn board_classes_declared() {
 
 #[test]
 fn no_shacl_in_ontology() {
-    // Shapes belong in EX-3218/3219/3220, not in the base ontology
+    // Shapes belong in the SHACL shape files, not in the base ontology
     let content = load_ontology();
     assert!(
         !content.contains("sh:NodeShape") && !content.contains("sh:property"),

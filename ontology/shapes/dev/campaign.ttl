@@ -1,8 +1,8 @@
 # campaign.ttl — SHACL Shape for kb:Campaign (dev board)
 #
 # A Campaign is the container ABOVE a voyage — a program that groups 2+ related
-# voyages under one narrative arc (EX-6249). Member voyages point at it via a
-# graph edge (kb:partOf, added in Phase 1 / VY-6244), NOT a flat parent field:
+# voyages under one narrative arc. Member voyages point at it via a
+# graph edge (kb:partOf), NOT a flat parent field:
 # membership is opt-in graph structure, like a tag but queryable — never a forced
 # hierarchy rung every voyage must fill.
 #
@@ -51,7 +51,7 @@ kb:CampaignShape a sh:NodeShape ;
     sh:property [
         sh:path kb:body ; sh:order 10 ;
         sh:minCount 1 ;
-        sh:message "body required — use: nk templates campaign" ] ;
+        sh:message "body required — use: arrow-kanban templates campaign" ] ;
 
     # --- Body section structure ---
 
@@ -70,7 +70,7 @@ kb:CampaignShape a sh:NodeShape ;
     kb:requiredSection [
         kb:sectionName "Voyages" ; sh:order 3 ;
         kb:headingLevel 2 ;
-        kb:templateHint "| # | ID | Title | Depends On |\n|---|-----|-------|-----------|\n| 1 | VY-XXXX | Title | — |\nMember voyages link back with: nk update VY-XXXX --relate partOf:CA-XXXX" ;
+        kb:templateHint "| # | ID | Title | Depends On |\n|---|-----|-------|-----------|\n| 1 | VY-XXXX | Title | — |\nMember voyages link back with: arrow-kanban update VY-XXXX --relate partOf:CA-XXXX" ;
         kb:required true ] ;
 
     kb:requiredSection [

@@ -20,7 +20,7 @@ kb:VoyageShape a sh:NodeShape ;
         sh:path kb:id ; sh:order 0 ;
         sh:pattern "^VY-\\d{4,}$" ;
         sh:minCount 1 ; sh:maxCount 1 ;
-        sh:message "ID must match VY-NNNN format (e.g. VY-3211)" ] ;
+        sh:message "ID must match VY-NNNN format (e.g. VY-1234)" ] ;
 
     sh:property [
         sh:path kb:priority ; sh:order 1 ;
@@ -43,12 +43,12 @@ kb:VoyageShape a sh:NodeShape ;
         sh:path kb:updated_at ; sh:order 4 ;
         sh:datatype xsd:dateTime ;
         sh:minCount 0 ;
-        sh:description "Auto-set on any mutation (added by EX-3244)" ] ;
+        sh:description "Auto-set on any mutation" ] ;
 
     sh:property [
         sh:path kb:body ; sh:order 10 ;
         sh:minCount 1 ;
-        sh:message "body required — use: nk templates voyage" ] ;
+        sh:message "body required — use: arrow-kanban templates voyage" ] ;
 
     # --- Body section structure ---
 

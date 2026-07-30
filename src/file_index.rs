@@ -2,7 +2,7 @@
 //! File indexer — scans arrow-kanban/ folder for markdown files and indexes them.
 //!
 //! Supports the "drop a file" use case: agents and humans can add .md files
-//! directly to arrow-kanban/{work,research}/{type}/ folders and `nk query --search`
+//! directly to arrow-kanban/{work,research}/{type}/ folders and `arrow-kanban query --search`
 //! finds them without explicit registration.
 //!
 //! Design:

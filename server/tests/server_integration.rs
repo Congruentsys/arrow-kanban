@@ -4,7 +4,7 @@
 //! Tests exercise the dispatch() function directly, bypassing NATS transport.
 //! This validates the full request→handler→response pipeline with persistence.
 //!
-//! EXP-3002 Phase 3.
+//! Server integration tests.
 
 use arrow_kanban_server::events::detect_mutation;
 use arrow_kanban_server::handlers::dispatch;
@@ -653,7 +653,7 @@ fn test_blocked_via_server() {
     assert!(blocked.get("error").is_none(), "blocked command succeeds");
 }
 
-// ── Git command dispatch tests (EX-3012) ────────────────────────────────────
+// ── Git command dispatch tests ────────────────────────────────────
 
 #[test]
 fn test_git_push_returns_message() {
@@ -722,7 +722,7 @@ fn test_git_rebase_returns_detail() {
     assert!(result["detail"].as_str().unwrap().contains("rebase"));
 }
 
-// ─── Move with Resolution + ClosedBy (EX-3081) ─────────────────────────────
+// ─── Move with Resolution + ClosedBy ─────────────────────────────
 
 #[test]
 fn test_move_with_resolution_and_closed_by() {
@@ -828,7 +828,7 @@ fn test_resolution_on_non_terminal_state_rejected() {
     );
 }
 
-// ─── CH-4307: list filters (tag, priority, resolution) ─────────────────────
+// ─── List filters (tag, priority, resolution) ──────────────────────────────
 
 /// Helper: create an item via dispatch and return its ID.
 fn create_item(state: &mut ServerState, body: serde_json::Value) -> String {
@@ -838,7 +838,7 @@ fn create_item(state: &mut ServerState, body: serde_json::Value) -> String {
     created["id"].as_str().unwrap().to_string()
 }
 
-/// CH-4307: `nk list --tag X` previously returned the full board because
+/// `arrow-kanban list --tag X` previously returned the full board because
 /// `ListRequest` on the server side didn't include `tags` and the field was
 /// silently dropped by serde. Now the filter actually works.
 #[test]
@@ -946,7 +946,7 @@ fn test_list_filter_unknown_tag_returns_empty() {
 }
 
 /// Priority filter applies on the server side too (was on `ListRequest` neither
-/// before CH-4307; we add it alongside the tag fix to keep parity with local
+/// before the filter work; we add it alongside the tag fix to keep parity with local
 /// mode).
 #[test]
 fn test_list_filter_by_priority() {
@@ -1070,7 +1070,7 @@ fn test_list_filter_tag_and_status_combined() {
     assert!(!table.contains(&backlog_id));
 }
 
-// ─── CH-4521: Rank dispatch ────────────────────────────────────────────────
+// ─── Rank dispatch ─────────────────────────────────────────────────────────
 
 #[test]
 fn test_rank_dispatch_sets_value() {
@@ -1156,7 +1156,7 @@ fn test_rank_does_not_overwrite_priority() {
     assert_eq!(item["rank"].as_i64(), Some(1), "rank set");
 }
 
-// ─── CH-6056: write-durability gate (HZ-6053) ───────────────────────────────
+// ─── Write-durability gate ────────────────────────────────────────
 //
 // The defect these cover: the server used to apply a mutation to memory, fail
 // to persist it, log "Warning: ...", and still return SUCCESS. Agents were told
@@ -1348,9 +1348,9 @@ fn test_healthy_server_is_unaffected() {
     assert_eq!(item["title"], "normal");
 }
 
-// ─── CH-6109: typed relationships on create + edit ──────────────────────────
+// ─── Typed relationships on create + edit ───────────────────────────────────
 //
-// Before this, `nk create` had NO relationship flag at all and `nk update` had only
+// Before this, `arrow-kanban create` had NO relationship flag at all and `arrow-kanban update` had only
 // --related/--depends-on (flat, untyped, replace-semantics). An H→M→EXPR research trio
 // was wired with --related, which discards direction and kind — you could not ask "which
 // experiment validates this hypothesis?" without reading prose.
@@ -1444,7 +1444,7 @@ fn the_h_m_expr_trio_is_expressible_at_create_time() {
 }
 
 /// related/dependsOn edges must ALSO land in the flat columns, or roadmap /
-/// critical-path / worklist / nk show silently stop seeing relationships.
+/// critical-path / worklist / arrow-kanban show silently stop seeing relationships.
 #[test]
 fn related_and_depends_on_still_project_into_the_flat_columns() {
     let dir = tempfile::tempdir().expect("tempdir");

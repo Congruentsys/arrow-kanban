@@ -2,7 +2,7 @@
 //! Integration tests for arrow-kanban CLI commands that previously had no test
 //! coverage: blocked, roadmap, validate, next, init, boards, history.
 //!
-//! EXP-3002 Phase 1.
+//! CLI integration tests.
 
 use arrow::array::{Array, BooleanArray, ListArray, StringArray, TimestampMillisecondArray};
 use arrow_kanban::crud::{CreateItemInput, KanbanStore};

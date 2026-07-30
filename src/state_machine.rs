@@ -161,9 +161,9 @@ fn status_to_wip_category<'a>(status: &str, board_name: &str) -> &'a str {
 
 /// Valid resolution values.
 ///
-/// CH-5742: `refuted` is required by CLAUDE.md guardrail #6 (refuted-narrow hypothesis closure:
-/// `nk move H-XXX retired --resolution refuted` with the negative-evidence eval) — it was missing
-/// here, so the CLI rejected the exact command the guardrail mandates.
+/// `refuted` supports hypothesis closure on negative evidence
+/// (`move H-1234 retired --resolution refuted`) — it was missing here, so the CLI
+/// rejected a resolution the research lifecycle legitimately needs.
 const VALID_RESOLUTIONS: &[&str] = &[
     "completed",
     "superseded",
@@ -493,7 +493,7 @@ mod tests {
         assert!(validate_resolution(Some("completed"), "complete").is_ok());
         assert!(validate_resolution(Some("wont_do"), "abandoned").is_ok());
         assert!(validate_resolution(Some("completed"), "retired").is_ok());
-        // CH-5742: guardrail #6 — `nk move H-XXX retired --resolution refuted` must be accepted.
+        // guardrail #6 — `arrow-kanban move H-XXX retired --resolution refuted` must be accepted.
         assert!(validate_resolution(Some("refuted"), "retired").is_ok());
         assert!(validate_resolution(Some("refuted"), "done").is_ok());
     }

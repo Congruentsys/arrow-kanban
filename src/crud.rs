@@ -44,7 +44,7 @@ pub enum CrudError {
 
 pub type Result<T> = std::result::Result<T, CrudError>;
 
-/// What [`KanbanStore::ratify_phase`] did — the built-in verify (the whole point of CH-4906: a
+/// What [`KanbanStore::ratify_phase`] did — the built-in verify (the whole point: a
 /// partial strip must be impossible-or-caught, never silent).
 #[derive(Debug, Clone)]
 pub struct RatifyReport {
@@ -398,11 +398,11 @@ impl KanbanStore {
         Ok((status, assignee))
     }
 
-    /// **Atomic exclusive claim guard (CH-4905).** Reject a cross-agent claim: if `id` is already
+    /// **Atomic exclusive claim guard.** Reject a cross-agent claim: if `id` is already
     /// `in_progress` under a *different* agent and `forced` is false, return
     /// [`CrudError::ClaimConflict`]. Allowed (returns `Ok`): not yet `in_progress`, currently
     /// unassigned, a self-reclaim (same agent), or `forced` (an audited handoff). This makes
-    /// `nk move <id> in_progress --assign X` a true mutex rather than a last-writer-wins overwrite —
+    /// `arrow-kanban move <id> in_progress --assign X` a true mutex rather than a last-writer-wins overwrite —
     /// the second agent to claim an in-flight item is told to pick something else.
     pub fn check_exclusive_claim(&self, id: &str, new_assignee: &str, forced: bool) -> Result<()> {
         if forced {
@@ -609,10 +609,10 @@ impl KanbanStore {
                     arrow::array::ListBuilder::new(arrow::array::StringBuilder::new());
                 for i in 0..batch.num_rows() {
                     if i == row_idx {
-                        // CH-6742 defect 1: an id/tag list never has an empty element.
+                        // An id/tag list never has an empty element.
                         // `"".split(',')` yields `[""]`, so `--depends-on ""` (the natural
                         // way to clear) used to store a `[""]` that renders as a blank in
-                        // `nk show`, blocks in `nk blocked` (a length-1 list), yet reads
+                        // `arrow-kanban show`, blocks in `arrow-kanban blocked` (a length-1 list), yet reads
                         // ready in `--ready` (`""` is not an active id). Filter empties HERE —
                         // the single choke point every list-column write funnels through
                         // (update_tags/related/depends_on + the server + any direct NATS
@@ -702,7 +702,7 @@ impl KanbanStore {
         Ok((0..strs.len()).map(|i| strs.value(i).to_string()).collect())
     }
 
-    /// **First-class ratification (CH-4906).** In ONE server-side call, strip the
+    /// **First-class ratification.** In ONE server-side call, strip the
     /// `pending-ratification` tag from every item carrying `phase_tag`, move `VY-` items to
     /// `in_progress` (the sprint-start), and **re-verify** that none remain pending. Replaces the
     /// fragile shell-loop strip that silently left 23 items pending (zsh word-split / alias-in-subshell
@@ -785,7 +785,7 @@ impl KanbanStore {
 
     /// Read an item's flat list field (`related` / `depends_on`).
     ///
-    /// CH-6109: needed so a typed `related`/`dependsOn` edge can be PROJECTED into the
+    /// needed so a typed `related`/`dependsOn` edge can be PROJECTED into the
     /// flat column additively — reading, appending, writing back — rather than replacing
     /// and silently dropping the other entries.
     pub fn get_list_field(&self, id: &str, col: usize) -> Result<Vec<String>> {
@@ -810,7 +810,7 @@ impl KanbanStore {
             .collect())
     }
 
-    /// Add `value` to a flat list field if absent (CH-6109 projection, additive).
+    /// Add `value` to a flat list field if absent (projection, additive).
     pub fn add_to_list_field(&mut self, id: &str, col: usize, value: &str) -> Result<()> {
         let mut cur = self.get_list_field(id, col)?;
         if cur.iter().any(|v| v == value) {
@@ -821,10 +821,10 @@ impl KanbanStore {
         self.touch_updated_at(id)
     }
 
-    /// Remove `value` from a flat list field (CH-6109 projection, subtractive).
+    /// Remove `value` from a flat list field (projection, subtractive).
     ///
     /// Returns `true` if the value was present and removed, `false` if it was absent
-    /// (CH-6742 defect 2: the caller — the `--unrelate` del loop — needs to know whether
+    /// (The caller — the `--unrelate` del loop — needs to know whether
     /// the flat projection actually held the edge, so it can report a flat-ONLY edge as
     /// removed even when there is no typed relation to remove).
     pub fn remove_from_list_field(&mut self, id: &str, col: usize, value: &str) -> Result<bool> {
@@ -854,7 +854,7 @@ impl KanbanStore {
         self.touch_updated_at(id)
     }
 
-    /// Update an item's closed_by provenance URI (e.g., PROP-2025, PR URL).
+    /// Update an item's closed_by provenance URI (e.g., PROP-1234, PR URL).
     pub fn update_closed_by(&mut self, id: &str, closed_by: Option<&str>) -> Result<()> {
         self.update_nullable_string_field(id, items_col::CLOSED_BY, closed_by)?;
         self.touch_updated_at(id)
@@ -1513,7 +1513,7 @@ mod tests {
         assert!(hashes.is_null(0));
     }
 
-    // ── Update + Comment Tests (EXP-1289) ──
+    // ── Update + Comment Tests ──
 
     fn update_test_item(store: &mut KanbanStore) -> String {
         store
@@ -1722,12 +1722,12 @@ mod tests {
         assert_eq!(vals.value(0), "EXP-200");
     }
 
-    // ── CH-6742: dependency-edit defects ────────────────────────────────────
+    // ── Dependency-edit defects ────────────────────────────────────
 
     #[test]
     fn test_ch6742_depends_on_empty_string_clears_not_corrupts() {
         // DEFECT 1: `--depends-on ""` splits to `[""]`; storing that produced a list with a
-        // stray empty element (renders blank in `nk show`, blocks in `nk blocked`, reads
+        // stray empty element (renders blank in `arrow-kanban show`, blocks in `arrow-kanban blocked`, reads
         // ready in `--ready`). An all-empty input must CLEAR the list, never corrupt it.
         let mut store = KanbanStore::new();
         let id = update_test_item(&mut store); // starts with depends_on = ["EXP-99"]
@@ -1858,7 +1858,7 @@ mod tests {
         assert!(updated.value(0) >= before);
     }
 
-    // ── Resolution + ClosedBy Tests (EX-3081) ──
+    // ── Resolution + ClosedBy Tests ──
 
     #[test]
     fn test_resolution_set_and_read() {
@@ -1955,7 +1955,7 @@ mod tests {
         assert_eq!(cb.value(0), "PROP-2099");
     }
 
-    // ── CH-4906: first-class ratify ──────────────────────────────────────────
+    // ── First-class ratify ──────────────────────────────────────────
 
     fn item_with_tags(store: &mut KanbanStore, ty: ItemType, tags: &[&str]) -> String {
         store
@@ -2037,7 +2037,7 @@ mod tests {
         assert_eq!(report.remaining_pending, 0);
     }
 
-    // ── CH-4905: atomic exclusive claim ──────────────────────────────────────
+    // ── Atomic exclusive claim ──────────────────────────────────────
 
     /// Claim `id` for `agent`: move to in_progress + set the assignee (mirrors what the move
     /// handler now does).

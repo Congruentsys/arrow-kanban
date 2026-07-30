@@ -38,7 +38,7 @@ fn priority_abbrev(priority: &str) -> &'static str {
     }
 }
 
-/// Extract the numeric ID part from an item ID (e.g., "EXP-1264" → 1264).
+/// Extract the numeric ID part from an item ID (e.g., "EXP-1234" → 1234).
 fn extract_id_number(id: &str) -> u32 {
     id.split('-')
         .next_back()
@@ -55,7 +55,7 @@ fn format_depends_short(depends: &[String]) -> String {
     depends
         .iter()
         .map(|d| {
-            // Shorten: "EXP-1264" → "1264", "VOY-145" → "145"
+            // Shorten: "EXP-1234" → "1234", "VOY-42" → "42"
             let num = extract_id_number(d);
             if num > 0 { num.to_string() } else { d.clone() }
         })
@@ -290,15 +290,15 @@ pub fn export_json(batches: &[RecordBatch]) -> String {
     format!("[\n{}\n]", items.join(",\n"))
 }
 
-/// The full JSON view of ONE item (CH-6645): the item's own fields (from
+/// The full JSON view of ONE item: the item's own fields (from
 /// [`export_json`]) enriched with `comments` — each carrying its `created_at_ms`
 /// timestamp — and `status_history`: every recorded transition as
 /// `{from, to, at, by, forced, reason}`, read from the runs table (the same
 /// status-history the board already records — no schema change).
 ///
-/// This is the payload `nk show <ID> --format json` returns under `--server`. The
+/// This is the payload `arrow-kanban show <ID> --format json` returns under `--server`. The
 /// timestamps are what make the FA-E3 time-to-orient measure computable from the
-/// CLI (claim transition → first work artifact), which is why it exists (EX-6643).
+/// CLI (claim transition → first work artifact), which is why it exists.
 /// `at` is epoch milliseconds (the runs table's `TimestampMillisecondArray`).
 pub fn export_item_json_full(
     item: &RecordBatch,
@@ -1670,7 +1670,7 @@ mod tests {
         assert!(md.contains("## Constraints"));
         assert!(md.contains("- Don't break anything"));
 
-        // Verify NO duplicate heading (body already contains # EX-1300: ...)
+        // Verify NO duplicate heading (body already contains # EX-1234: ...)
         let heading_count = md.matches("# EX-1300: Round Trip Test").count();
         assert_eq!(heading_count, 1, "heading should appear exactly once");
     }

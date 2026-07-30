@@ -1,8 +1,8 @@
 # groups.ttl — sh:PropertyGroup definitions for dev board shapes
 #
 # Property groups define the section headers used in template generation
-# (EX-3221). Each group has an rdfs:label that becomes the ## heading
-# when nk templates generates a body template.
+#. Each group has an rdfs:label that becomes the ## heading
+# when arrow-kanban templates generates a body template.
 #
 # These are referenced by expedition.ttl, voyage.ttl, chore.ttl, hazard.ttl,
 # signal.ttl, and feature.ttl via sh:group / kb:requiredSection.

@@ -9,9 +9,9 @@
 //! # CLI Usage
 //!
 //! ```text
-//! nk hdd experiment run EXPR-131.1           # Start a new run
-//! nk hdd experiment status EXPR-131.1        # Show all runs
-//! nk hdd experiment complete EXPR-131.1 --run 1 --results '{"accuracy": 0.85}'
+//! arrow-kanban hdd experiment run EXPR-1234.1           # Start a new run
+//! arrow-kanban hdd experiment status EXPR-1234.1        # Show all runs
+//! arrow-kanban hdd experiment complete EXPR-1234.1 --run 1 --results '{"accuracy": 0.85}'
 //! ```
 
 use crate::schema::{experiment_runs_schema, expr_run_col};

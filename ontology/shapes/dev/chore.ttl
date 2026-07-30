@@ -20,7 +20,7 @@ kb:ChoreShape a sh:NodeShape ;
         sh:path kb:id ; sh:order 0 ;
         sh:pattern "^CH-\\d{4,}$" ;
         sh:minCount 1 ; sh:maxCount 1 ;
-        sh:message "ID must match CH-NNNN format (e.g. CH-3210)" ] ;
+        sh:message "ID must match CH-NNNN format (e.g. CH-1234)" ] ;
 
     sh:property [
         sh:path kb:priority ; sh:order 1 ;
@@ -49,12 +49,12 @@ kb:ChoreShape a sh:NodeShape ;
         sh:path kb:updated_at ; sh:order 5 ;
         sh:datatype xsd:dateTime ;
         sh:minCount 0 ;
-        sh:description "Auto-set on any mutation (added by EX-3244)" ] ;
+        sh:description "Auto-set on any mutation" ] ;
 
     sh:property [
         sh:path kb:body ; sh:order 10 ;
         sh:minCount 1 ;
-        sh:message "body required — use: nk templates chore" ] ;
+        sh:message "body required — use: arrow-kanban templates chore" ] ;
 
     # --- Body section structure ---
 

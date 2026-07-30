@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Tests for crates/arrow-kanban/ontology/shapes/dev/*.ttl
 //!
-//! EX-3218: SHACL Shapes — Dev Board Item Types (6 types)
+//! SHACL Shapes — Dev Board Item Types (6 types)
 //!
 //! Validates that each shape file:
 //! - exists and is readable
@@ -210,7 +210,7 @@ fn priority_has_sh_in_on_shapes_that_require_it() {
 
 #[test]
 fn assignee_is_required_without_a_fleet_enum() {
-    // D1 (SG-6801): the open engine does NOT bake in the fleet roster. Assignee is a
+    // D1: the open engine does NOT bake in the fleet roster. Assignee is a
     // required field (minCount 1, default "unassigned") — a free string, not an sh:in
     // enum of agent names (that constraint moves inward to fleet composition).
     let required_assignee = &["expedition.ttl", "chore.ttl", "feature.ttl"];
@@ -287,7 +287,7 @@ fn all_shapes_have_required_sections_with_template_hints() {
         );
         assert!(
             content.contains("kb:templateHint"),
-            "{file}: missing kb:templateHint — required for nk templates output"
+            "{file}: missing kb:templateHint — required for arrow-kanban templates output"
         );
         assert!(
             content.contains("kb:sectionName"),
@@ -375,7 +375,7 @@ fn comment_shape_has_all_7_properties() {
     for path in required_paths {
         assert!(
             content.contains(path),
-            "comment.ttl: missing property {path} (required by CommentsTable schema from EX-3244)"
+            "comment.ttl: missing property {path} (required by the CommentsTable schema)"
         );
     }
 }
@@ -504,7 +504,7 @@ fn all_groups_have_rdfs_label_and_sh_order() {
 }
 
 // ---------------------------------------------------------------------------
-// No SHACL state transition constraints (those belong in EX-3220)
+// No SHACL state transition constraints (those belong in the workflow shapes)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -513,7 +513,7 @@ fn dev_shapes_contain_no_state_transition_sparql() {
         let content = load_shape(file);
         assert!(
             !content.contains("sh:SPARQLConstraint") && !content.contains("sh:sparql"),
-            "{file}: must NOT contain SPARQL constraints — state transitions belong in EX-3220 (workflow shapes)"
+            "{file}: must NOT contain SPARQL constraints — state transitions belong in the workflow shapes (workflow shapes)"
         );
     }
 }

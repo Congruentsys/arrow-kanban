@@ -46,7 +46,7 @@ pub(crate) const DEFAULT_STATES: &[&str] = &["backlog", "in_progress", "review",
 pub fn dispatch(subject: &str, payload: &[u8], state: &mut ServerState) -> Vec<u8> {
     let command = subject.strip_prefix("kanban.cmd.").unwrap_or(subject);
 
-    // CH-6056: admit mutations BEFORE they touch memory. Once the store is not
+    // admit mutations BEFORE they touch memory. Once the store is not
     // durable, refusing up front leaves nothing to roll back — the alternative
     // is applying a change we cannot keep and then discovering it too late.
     // Reads are deliberately unaffected: a degraded board is still worth
@@ -60,7 +60,7 @@ pub fn dispatch(subject: &str, payload: &[u8], state: &mut ServerState) -> Vec<u
             &format!(
                 "REFUSED — the kanban store is not accepting durable writes ({reason}). Your \
                  change was NOT applied. Reads still work. Free the underlying problem (usually a \
-                 full disk); the server re-probes and recovers automatically. See HZ-6053."
+                 full disk); the server re-probes and recovers automatically."
             ),
             "STORE_DEGRADED",
         );
@@ -150,7 +150,7 @@ pub fn dispatch(subject: &str, payload: &[u8], state: &mut ServerState) -> Vec<u
         "git.log" | "git.blame" | "git.rebase" => serialize_response(&serde_json::json!({
             "detail": format!(
                 "git.{}: operates on local graph store. Use --store to specify path. \
-                 Server-side git operations planned for VY-3009 Phase 2.",
+                 Server-side git operations are planned for a future release.",
                 command.strip_prefix("git.").unwrap_or(command)
             ),
         })),
@@ -178,7 +178,7 @@ pub fn dispatch(subject: &str, payload: &[u8], state: &mut ServerState) -> Vec<u
 
     // After successful mutations, persist state.
     //
-    // CH-6056 / HZ-6053: a persist failure is NOT a warning to step over. The
+    // A persist failure is NOT a warning to step over. The
     // mutation is already in memory but not on disk, so the store has diverged
     // and a restart would discard it. Report the failure to the caller instead
     // of acking a write we could not keep, and degrade the gate so the NEXT
@@ -202,7 +202,7 @@ pub fn dispatch(subject: &str, payload: &[u8], state: &mut ServerState) -> Vec<u
                         "'{command}' was applied in memory but COULD NOT BE PERSISTED ({err}). \
                          Treat this write as LOST — it will not survive a restart. The server is \
                          now DEGRADED and further mutations are refused until the store accepts \
-                         writes again. See HZ-6053."
+                         writes again."
                     ),
                     "STORE_NOT_DURABLE",
                 ));
