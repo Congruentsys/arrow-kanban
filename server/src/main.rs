@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use arrow_kanban::backup::{self, BackupConfig};
 use arrow_kanban::persist;
+use arrow_kanban_server::actor;
 use arrow_kanban_server::state::ServerState;
 use arrow_kanban_server::storage::{ParquetBackend, Seq, StorageBackend};
 use clap::Parser;
@@ -88,7 +89,7 @@ fn main() {
     }
 }
 
-async fn run(args: ServiceArgs, mut state: ServerState) -> Result<(), Box<dyn std::error::Error>> {
+async fn run(args: ServiceArgs, state: ServerState) -> Result<(), Box<dyn std::error::Error>> {
     // Plaintext fleet bus (byte-for-byte the former non-TLS connect path).
     let client = async_nats::connect(&args.nats_url).await?;
     let js = async_nats::jetstream::new(client.clone());
@@ -108,26 +109,34 @@ async fn run(args: ServiceArgs, mut state: ServerState) -> Result<(), Box<dyn st
     let subscribe_subject = format!("{CMD_SUBJECT_PREFIX}.>");
     let mut subscriber = client.subscribe(subscribe_subject).await?;
 
+    let data_dir = args.data_dir.clone();
+
     // The transactional-outbox watermark: the last seq durably PUBLISHED to
     // JetStream. Committed events are published OUTSIDE the mutation critical
     // section, and the watermark advances only after each publish ACKs. A crash
     // between commit and publish leaves `committed_seq` ahead of this watermark,
     // so the tail is re-derived (`events_since`) and re-published on restart;
     // JetStream dedups the re-publish by the stable `Nats-Msg-Id`.
-    let mut published: Seq = read_published_watermark(&args.data_dir);
+    let mut published: Seq = read_published_watermark(&data_dir);
+
+    // Spawn the ONE engine-owning task. The request loop reaches the engine only
+    // through the handle (which serializes mutations); reads and the outbox drain
+    // stay off the write path. On shutdown the task persists — belt-and-suspenders
+    // over the commit boundary, which already made every mutation durable.
+    let (handle, engine_task) = actor::spawn(state, |engine| persist_state(&engine));
 
     tracing::info!(
         prefix = CMD_SUBJECT_PREFIX,
         url = %args.nats_url,
         stream = EVENT_STREAM_NAME,
-        committed = state.committed_seq(),
+        committed = handle.committed_seq(),
         published,
         "kanban service ready"
     );
 
     // Startup drain: re-publish anything committed-but-unpublished from a prior
     // crash before serving new traffic (the crash-after-commit-before-publish case).
-    drain_outbox(&js, &state, &mut published, &args.data_dir).await;
+    drain_outbox(&js, &data_dir, &mut published).await;
 
     loop {
         tokio::select! {
@@ -138,9 +147,9 @@ async fn run(args: ServiceArgs, mut state: ServerState) -> Result<(), Box<dyn st
                 };
                 let subject = msg.subject.to_string();
 
-                // Dispatch: the kanban server routes every command through the
-                // typed engine (decode → apply → commit → encode).
-                let response = state.dispatch(&subject, &msg.payload);
+                // Dispatch through the engine-owning task: same decode → apply →
+                // commit → encode, serialized, byte-identical reply.
+                let response = handle.dispatch(&subject, &msg.payload).await;
 
                 // Reply to the requester.
                 if let Some(reply_to) = msg.reply
@@ -149,9 +158,10 @@ async fn run(args: ServiceArgs, mut state: ServerState) -> Result<(), Box<dyn st
                     tracing::error!(error = %e, subject = %subject, "reply failed");
                 }
 
-                // Outbox relay: publish committed-but-unpublished events, OUTSIDE
-                // the mutation critical section, advancing the watermark per ACK.
-                drain_outbox(&js, &state, &mut published, &args.data_dir).await;
+                // Outbox relay: publish committed-but-unpublished events by
+                // path-reading the durable log directly (never through the owning
+                // task), advancing the watermark per ACK.
+                drain_outbox(&js, &data_dir, &mut published).await;
             }
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("shutting down");
@@ -160,7 +170,10 @@ async fn run(args: ServiceArgs, mut state: ServerState) -> Result<(), Box<dyn st
         }
     }
 
-    persist_state(&state);
+    // Close the command channel (drop the sole handle) so the owning task runs its
+    // shutdown persist, then wait for it to finish before exiting.
+    drop(handle);
+    let _ = engine_task.await;
     Ok(())
 }
 
@@ -200,13 +213,17 @@ fn write_published_watermark(data_dir: &std::path::Path, seq: Seq) {
 /// Publish every committed-but-unpublished event to JetStream, advancing the
 /// watermark only after each server ACK. Stops on the first publish/ack error so
 /// the unacked tail is retried on the next drain (never dropped).
+///
+/// The committed tail is a PURE PATH-READ of the durable append-only log
+/// ([`ParquetBackend::read_events_since`]), so the drain never contends with the
+/// engine-owning task — it reads the same durable bytes the commit fsynced,
+/// without a channel round trip or a lock on the engine.
 async fn drain_outbox(
     js: &async_nats::jetstream::Context,
-    state: &ServerState,
-    published: &mut Seq,
     data_dir: &std::path::Path,
+    published: &mut Seq,
 ) {
-    let events = match state.events_since(*published) {
+    let events = match ParquetBackend::read_events_since(data_dir, *published) {
         Ok(events) => events,
         Err(e) => {
             tracing::error!(error = %e, "outbox: reading committed events failed");
