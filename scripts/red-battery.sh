@@ -129,6 +129,12 @@ mutate_expect_red "PRINTED tracker citation (string literal)"     server/src/lib
 # (b5) could not see.
 mutate_expect_red "PRINTED tracker citation, ID-FIRST (CH-6863)" server/src/lib.rs   $'\nfn i() { panic!("HZ-6053 INVARIANT VIOLATED - write lost"); }\n'
 
+# E3 PR-2 — the commit-boundary files are new src/test surface; prove the gate covers
+# them too (a leak into a NEW file must go RED, not ride in un-scanned).
+mutate_expect_red "closed vocab -> storage.rs (new commit-boundary src)"   server/src/storage.rs                        $'\n// certifiability_class plane-cognition\n'
+mutate_expect_red "closed crate ref -> storage.rs (new commit-boundary src)" server/src/storage.rs                      $'\n// pulls nusy-graph-review internals\n'
+mutate_expect_red "closed vocab -> the new outbox battery (server/tests)"   server/tests/outbox_atomicity_acceptance.rs  $'\n// yurtle certifiability_class\n'
+
 # final: tree restored + gate green again.
 "${GATE[@]}" >/dev/null 2>&1 || fail "gate is not green after restore — a mutation leaked."
 echo "✅ [red-battery] all $INJECTIONS injections RED; clean tree green; positive controls hold."

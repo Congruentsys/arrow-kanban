@@ -28,6 +28,7 @@ use crate::handlers::core::{
 };
 use crate::handlers::relations::{RelationAddRequest, RelationQueryRequest};
 use crate::health::HealthGate;
+use crate::storage::{CommittedEvent, ParquetBackend, Seq, StorageBackend, StoreError};
 use arrow_kanban::crud::KanbanStore;
 use arrow_kanban::item_type::ItemType;
 use arrow_kanban::relations::RelationsStore;
@@ -71,6 +72,20 @@ impl KanbanReply {
         }
     }
 
+    /// The reply as a JSON value, WITHOUT consuming it — the outbox event
+    /// derivation reads reply-only fields (the allocated id, the prior status,
+    /// the minted relation id) from here. Structurally identical to
+    /// [`into_bytes`](Self::into_bytes)'s output, just not yet serialized.
+    pub fn to_value(&self) -> serde_json::Value {
+        match self {
+            KanbanReply::Create(r) => serde_json::to_value(r).unwrap_or(serde_json::Value::Null),
+            KanbanReply::Move(r) => serde_json::to_value(r).unwrap_or(serde_json::Value::Null),
+            KanbanReply::Delete(r) => serde_json::to_value(r).unwrap_or(serde_json::Value::Null),
+            KanbanReply::Value(v) => v.clone(),
+            KanbanReply::Error(e) => serde_json::to_value(e).unwrap_or(serde_json::Value::Null),
+        }
+    }
+
     /// Encode to wire bytes. Mirrors the old `serialize_response` fallback so an
     /// (unreachable) serialization failure yields the same INTERNAL error shape.
     pub fn into_bytes(self) -> Vec<u8> {
@@ -101,6 +116,11 @@ impl KanbanReply {
 /// (`stats`, `templates`, the `hdd.run.*` and `source.*` families) carry the
 /// raw payload so their exact parsing — and thus their exact error bytes — is
 /// preserved unchanged inside the handler.
+///
+/// `Clone` lets [`KanbanEngine::apply`] keep the decoded command alive across
+/// routing so the committed event can be derived from `(command, reply)` after
+/// the handler has run (the reply carries the allocated id / prior status).
+#[derive(Clone)]
 pub enum KanbanCommand {
     // ── Core CRUD + analytics ──
     Create(CreateRequest),
@@ -406,32 +426,71 @@ fn parse_req<T: for<'de> serde::Deserialize<'de>>(payload: &[u8]) -> Result<T, K
     crate::handlers::parse_payload(payload).map_err(KanbanReply::from_error_bytes)
 }
 
-/// The stores + write-durability gate — the whole server semantics.
+/// The stores + write-durability gate + durable [`StorageBackend`] — the whole
+/// server semantics.
 ///
-/// Reads and writes both go through the synchronous [`apply`](Self::apply); there
-/// is no queue, actor, or replica here (that is later PR work).
-pub struct KanbanEngine {
+/// Generic over the backend so a consumer swaps durability by construction; PR-2
+/// ships only [`ParquetBackend`] (the default). Reads and writes both go through
+/// the synchronous [`apply`](Self::apply); there is no queue, actor, or replica
+/// here (that is later PR work).
+pub struct KanbanEngine<B: StorageBackend = ParquetBackend> {
     pub store: KanbanStore,
     pub relations: RelationsStore,
     pub data_dir: PathBuf,
     /// Write-durability gate: refuses mutations when the store is not
     /// accepting durable writes, instead of acking writes a restart would lose.
     pub health: HealthGate,
+    /// The durable commit boundary + outbox source.
+    pub backend: B,
 }
 
-impl KanbanEngine {
+impl KanbanEngine<ParquetBackend> {
+    /// Construct over the default [`ParquetBackend`] rooted at `data_dir`. The
+    /// backend discovers its committed high-water seq from any existing commit
+    /// log (0 for a fresh store); a store dir that cannot be scanned starts at 0.
     pub fn new(
         store: KanbanStore,
         relations: RelationsStore,
         data_dir: PathBuf,
         health: HealthGate,
     ) -> Self {
+        let backend = ParquetBackend::open(&data_dir).unwrap_or_else(|_| {
+            // A fresh backend at seq 0 — only reached if the store dir cannot be
+            // read at all, in which case the first commit's append will fail loud.
+            ParquetBackend::open(&PathBuf::from(".")).expect("default backend")
+        });
+        Self::with_backend(store, relations, data_dir, health, backend)
+    }
+}
+
+impl<B: StorageBackend> KanbanEngine<B> {
+    /// Construct over an explicit backend (a fault-injecting double in tests, a
+    /// future durability backend in production).
+    pub fn with_backend(
+        store: KanbanStore,
+        relations: RelationsStore,
+        data_dir: PathBuf,
+        health: HealthGate,
+        backend: B,
+    ) -> Self {
         Self {
             store,
             relations,
             data_dir,
             health,
+            backend,
         }
+    }
+
+    /// The high-water committed sequence — the durable log position.
+    pub fn committed_seq(&self) -> Seq {
+        self.backend.committed_seq()
+    }
+
+    /// Committed events with `seq` strictly greater than `after`, in seq order —
+    /// the outbox relay's source.
+    pub fn events_since(&self, after: Seq) -> Result<Vec<CommittedEvent>, StoreError> {
+        self.backend.events_since(after)
     }
 
     /// Decode → apply → encode. Strips the `kanban.cmd.` subject prefix first.
@@ -450,7 +509,6 @@ impl KanbanEngine {
     pub fn apply(&mut self, cmd: KanbanCommand) -> KanbanReply {
         let verb = cmd.verb_str();
         let is_mut = cmd.is_mutation();
-        let is_rel_mut = cmd.is_relation_mutation();
 
         // (a) Admit mutations BEFORE they touch memory. Once the store
         // is not durable, refusing up front leaves nothing to roll back. Reads
@@ -470,32 +528,47 @@ impl KanbanEngine {
             );
         }
 
+        // Keep the decoded command alive across routing so the committed event
+        // can be derived from `(command, reply)` — the reply carries the
+        // allocated id / prior status a checkpoint replay needs.
+        let event_cmd = if is_mut { Some(cmd.clone()) } else { None };
+
         // (b) run the command's logic.
         let result = self.route(cmd);
 
-        // (c) A persist failure is NOT a warning to step over.
-        // The mutation is in memory but not on disk, so report the failure to the
-        // caller instead of acking a write we could not keep, and degrade the gate
-        // so the NEXT mutation is refused before it ever touches memory.
+        // (c) The commit boundary. The mutation is in memory; it is durable only
+        // once `backend.commit` returns Ok — the append+fsync of its event is the
+        // barrier. On failure the write is NOT durable, so we report the failure
+        // to the caller instead of acking a write we could not keep, and degrade
+        // the gate so the NEXT mutation is refused before it ever touches memory.
         match result {
             Ok(reply) => {
                 if is_mut {
-                    let mut persist_error: Option<String> = None;
-                    if let Err(e) = arrow_kanban::persist::save_store(&self.data_dir, &self.store) {
-                        persist_error = Some(format!("store: {e}"));
-                    }
-                    if is_rel_mut
-                        && let Err(e) =
-                            arrow_kanban::persist::save_relations(&self.data_dir, &self.relations)
-                    {
-                        persist_error.get_or_insert(format!("relations: {e}"));
-                    }
-                    match persist_error {
-                        Some(err) => {
+                    // Derive the event that this write commits with. A mutation
+                    // MUST produce one (every `is_mutation` command is covered by
+                    // `mutation_event`); a None here is an internal inconsistency,
+                    // handled fail-closed as a durability failure rather than a
+                    // silent unpersisted write (the exact incident shape).
+                    let event = event_cmd
+                        .as_ref()
+                        .and_then(|c| crate::events::mutation_event(c, &reply));
+                    let commit = match &event {
+                        Some(ev) => self
+                            .backend
+                            .commit(&self.store, &self.relations, ev)
+                            .map_err(|e| e.to_string()),
+                        None => Err(format!(
+                            "'{verb}' mutated state but produced no event — refusing to ack an \
+                             unlogged write"
+                        )),
+                    };
+                    match commit {
+                        Ok(_seq) => self.health.record_persist_success(),
+                        Err(err) => {
                             self.health.record_persist_failure(verb, &err);
                             return KanbanReply::error(
                                 &format!(
-                                    "'{verb}' was applied in memory but COULD NOT BE PERSISTED ({err}). \
+                                    "'{verb}' was applied in memory but COULD NOT BE COMMITTED ({err}). \
                                      Treat this write as LOST — it will not survive a restart. The server is \
                                      now DEGRADED and further mutations are refused until the store accepts \
                                      writes again."
@@ -503,7 +576,6 @@ impl KanbanEngine {
                                 "STORE_NOT_DURABLE",
                             );
                         }
-                        None => self.health.record_persist_success(),
                     }
                 }
                 reply
