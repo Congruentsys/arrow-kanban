@@ -26,7 +26,7 @@ pub struct ItemInfo {
     pub assignee: String,
     pub related: Vec<String>,
     pub depends_on: Vec<String>,
-    /// Manual Captain rank. `Some(n)` = pinned at position n (lower = higher
+    /// Manual rank. `Some(n)` = pinned at position n (lower = higher
     /// priority); `None` = unranked, falls back to `priority`-string ordering.
     pub rank: Option<i32>,
 }
@@ -248,7 +248,7 @@ pub fn compute_critical_path(items: &[ItemInfo]) -> Result<CriticalPathResult, S
     for (id, &d) in &depth {
         depth_groups.entry(d).or_default().push(id.clone());
     }
-    // Sort within each group by manual rank (Captain ordering), then by
+    // Sort within each group by manual rank, then by
     // priority-string fallback. See `sort_key`.
     for group in depth_groups.values_mut() {
         group.sort_by(|a, b| {
@@ -536,6 +536,21 @@ pub fn group_by_voyage(items: &[ItemInfo]) -> (Vec<VoyageGroup>, Vec<String>) {
 
 // ─── Worklist ───────────────────────────────────────────────────────────────
 
+/// Distinct assignees present on the board (excluding the `unassigned` sentinel and
+/// blanks), sorted. This is the generic worklist agent set when the caller passes no
+/// `--agents` filter — the open engine derives the roster from the DATA, never a
+/// hardcoded fleet list.
+pub fn agents_from_items(items: &[ItemInfo]) -> Vec<String> {
+    let mut seen: Vec<String> = items
+        .iter()
+        .map(|i| i.assignee.trim().to_string())
+        .filter(|a| !a.is_empty() && a != "unassigned")
+        .collect();
+    seen.sort();
+    seen.dedup();
+    seen
+}
+
 /// Generate agent work assignments based on ready items and current assignments.
 pub fn generate_worklist(
     items: &[ItemInfo],
@@ -596,8 +611,7 @@ pub fn generate_worklist(
             .map(|s| s.as_str())
             .collect();
 
-        // Sort by: assigned-to-this-agent first, then by manual rank (Captain
-        // ordering), then by downstream count (bottlenecks first), then by
+        // Sort by: assigned-to-this-agent first, then by manual rank, then by downstream count (bottlenecks first), then by
         // priority-string fallback.
         available.sort_by(|&a, &b| {
             let a_assigned = item_map
@@ -710,7 +724,7 @@ pub fn priority_rank(p: &str) -> i32 {
 }
 
 /// "Highest priority first" sort key for ordering items in roadmap / worklist /
-/// next / ready views. Items with a manual `rank` (Captain ordering) sort
+/// next / ready views. Items with a manual `rank` sort
 /// before unranked items; among ranked items, lower rank value wins; ties are
 /// broken by the priority-string ordering (`critical` < `high` < ...).
 ///

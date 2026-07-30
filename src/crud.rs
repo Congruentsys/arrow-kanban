@@ -901,7 +901,7 @@ impl KanbanStore {
         Ok(())
     }
 
-    /// Set or clear an item's manual rank (Captain priority ordering;
+    /// Set or clear an item's manual rank (priority ordering;
     /// lower = higher priority, `None` = unranked). Writes to the
     /// existing `priority_rank` Int32 column.
     pub fn update_rank(&mut self, id: &str, rank: Option<i32>) -> Result<()> {

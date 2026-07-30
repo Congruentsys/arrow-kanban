@@ -298,8 +298,8 @@ enum Commands {
 
     /// Show agent work assignments based on dependency readiness
     Worklist {
-        /// Agent names (comma-separated). Default: DGX,M5,Mini
-        #[arg(long, default_value = "DGX,M5,Mini")]
+        /// Agent names (comma-separated). Default: every assignee on the board.
+        #[arg(long, default_value = "")]
         agents: String,
         /// How many items deep per agent (default: 3)
         #[arg(long, default_value = "3")]
@@ -371,7 +371,7 @@ enum Commands {
         command: HddCommands,
     },
 
-    /// Set priority rank for an item (Captain ordering)
+    /// Set priority rank for an item
     Rank {
         /// Item ID
         id: String,
@@ -425,10 +425,6 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// Unified config management — view and modify settings from all sources (VY-3510)
-    #[command(subcommand)]
-    Config(ConfigCommands),
-
     /// Snapshot the kanban Arrow store to a timestamped backup directory (EX-4010).
     Backup {
         /// List available snapshots and exit (does not create a backup).
@@ -447,40 +443,6 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-}
-
-/// Config subcommands (VY-3510 EX-3512)
-#[derive(Subcommand)]
-enum ConfigCommands {
-    /// List all configuration entries
-    List {
-        /// Filter by tier: auto, being_approved, captain_only, sealed
-        #[arg(long)]
-        tier: Option<String>,
-        /// Show only sealed (genome) entries
-        #[arg(long)]
-        sealed: bool,
-        /// Filter by source
-        #[arg(long)]
-        source: Option<String>,
-    },
-    /// Get a single config entry by key
-    Get {
-        /// Config key (e.g. "being.domain", "covenant.truthfulness")
-        key: String,
-    },
-    /// Set a config value (respects tier enforcement)
-    Set {
-        /// Config key
-        key: String,
-        /// New value
-        value: String,
-        /// Who is making this change
-        #[arg(long, default_value = "Captain")]
-        requester: String,
-    },
-    /// Show diff: runtime config vs genome sealed defaults
-    Diff,
 }
 
 #[derive(Subcommand)]
@@ -661,69 +623,6 @@ fn run_restore_command(
         restored.file_name().unwrap_or_default().to_string_lossy()
     );
     Ok(())
-}
-
-/// Unified config CLI — list/get/set/diff over the runtime configuration.
-fn run_config_command(cmd: &ConfigCommands) {
-    match cmd {
-        ConfigCommands::List {
-            tier,
-            sealed,
-            source,
-        } => {
-            println!("nk config list");
-            if *sealed {
-                println!("  --sealed: showing genome-sealed entries only");
-            }
-            if let Some(t) = tier {
-                println!("  --tier {t}");
-            }
-            if let Some(s) = source {
-                println!("  --source {s}");
-            }
-            println!();
-            println!("Config sources:");
-            println!("  being_config.json  — being runtime parameters");
-            println!("  cognitive_params   — Arrow-native with autonomy tiers");
-            println!("  nats_kv            — NATS KV ship_config bucket");
-            println!("  sealed_genome      — immutable genome (Ed25519 signed)");
-            println!("  claude_settings    — .claude/settings.json MCP permissions");
-            println!();
-            println!("Tiers: auto (T1), being_approved (T2), captain_only (T3), sealed");
-            println!();
-            println!("Integration pending: EX-3514 (awakening) will wire config_store");
-            println!("into the being runtime. Until then, use `nk show` for kanban config.");
-        }
-        ConfigCommands::Get { key } => {
-            println!("nk config get {key}");
-            println!("Config store not yet connected to NATS KV. Pending EX-3514.");
-        }
-        ConfigCommands::Set {
-            key,
-            value,
-            requester,
-        } => {
-            println!("nk config set {key} = {value} (by {requester})");
-            println!();
-            // Reject sealed keys immediately (no NATS needed for this check)
-            let sealed_prefixes = ["covenant.", "safety.", "identity.", "genome."];
-            if sealed_prefixes.iter().any(|p| key.starts_with(p)) {
-                eprintln!("Error: sealed entry '{key}' — genome immutable, cannot modify");
-                eprintln!("Sealed entries can only be changed by re-sealing the genome:");
-                eprintln!("  nk genome seal <being>");
-                std::process::exit(1);
-            }
-            println!("Config store not yet connected to NATS KV. Pending EX-3514.");
-        }
-        ConfigCommands::Diff => {
-            println!("nk config diff — runtime config vs genome sealed defaults");
-            println!();
-            println!("Requires a sealed genome. Generate one with:");
-            println!("  nk genome seal <being>");
-            println!();
-            println!("Config store not yet connected to NATS KV. Pending EX-3514.");
-        }
-    }
 }
 
 /// Run the materialize-item command: materialize a single Arrow item and its related web.
@@ -926,12 +825,6 @@ fn main() {
                 process::exit(1);
             }
         }
-    }
-
-    // Config command runs locally — unified config view.
-    if let Commands::Config(config_cmd) = &cli.command {
-        run_config_command(config_cmd);
-        return;
     }
 
     // MaterializeItem command — materialize a single Arrow item + related web.
@@ -1817,8 +1710,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 if all_batches.is_empty() {
                     println!("No items found.");
                 } else if flat {
-                    // Legacy flat view — backlog only, sorted by manual rank (Captain
-                    // ordering) then by priority-string fallback.
+                    // Legacy flat view — backlog only, sorted by manual rank then by priority-string fallback.
                     let results = store.query_items(Some("backlog"), None, None, None);
                     if results.is_empty() {
                         println!("No backlog items.");
@@ -1855,7 +1747,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                             };
                             get_key(a).cmp(&get_key(b))
                         });
-                        println!("Roadmap (flat, ranked by Captain rank then priority):");
+                        println!("Roadmap (flat, ranked by manual rank then priority):");
                         print!("{}", display::format_item_table(&sorted));
                     }
                 } else {
@@ -1912,8 +1804,11 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 let items = critical_path::extract_items(&all_batches);
                 let cp = critical_path::compute_critical_path(&items)
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-                let agent_list: Vec<String> =
-                    agents.split(',').map(|s| s.trim().to_string()).collect();
+                let agent_list: Vec<String> = if agents.trim().is_empty() {
+                    critical_path::agents_from_items(&items)
+                } else {
+                    agents.split(',').map(|s| s.trim().to_string()).collect()
+                };
                 let worklist = critical_path::generate_worklist(&items, &cp, &agent_list, depth);
                 print!("{}", critical_path::format_worklist(&worklist));
             }
@@ -2001,19 +1896,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
 
                     println!("{}", validate::format_board_summary(&reports));
 
-                    // CH-6502: body⇔tag pending-ratification consistency (a board-level check —
-                    // the parent-voyage exemption needs the whole item set).
-                    let ratification = validate::check_ratification_consistency(&batches);
-                    let ratification_errors = ratification
-                        .iter()
-                        .any(|f| f.severity == validate::Severity::Error);
-                    let formatted = validate::format_ratification_findings(&ratification);
-                    if !formatted.is_empty() {
-                        println!();
-                        println!("{formatted}");
-                    }
-
-                    if any_violations || ratification_errors {
+                    if any_violations {
                         process::exit(1);
                     }
                 }
@@ -2366,10 +2249,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
         // MaterializeItem/Config/Backup/Restore are intercepted before
         // run() regardless of features (they run locally). These arms are unreachable
         // but required for exhaustive pattern matching in every feature config.
-        Commands::MaterializeItem { .. }
-        | Commands::Config(_)
-        | Commands::Backup { .. }
-        | Commands::Restore { .. } => {
+        Commands::MaterializeItem { .. } | Commands::Backup { .. } | Commands::Restore { .. } => {
             unreachable!("MaterializeItem/Config/Backup/Restore intercepted before run()")
         }
     }
@@ -3033,10 +2913,7 @@ fn command_to_nats(command: &Commands) -> (String, serde_json::Value) {
             "comment".to_string(),
             serde_json::json!({ "id": id, "text": text }),
         ),
-        Commands::MaterializeItem { .. }
-        | Commands::Config(_)
-        | Commands::Backup { .. }
-        | Commands::Restore { .. } => {
+        Commands::MaterializeItem { .. } | Commands::Backup { .. } | Commands::Restore { .. } => {
             unreachable!("MaterializeItem/Config/Backup/Restore intercepted before NATS dispatch")
         }
     }

@@ -109,3 +109,8 @@ A board lives in `./.arrow-kanban/`:
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Trademarks
+
+Apache Arrow is a trademark of The Apache Software Foundation; arrow-kanban is
+not affiliated with or endorsed by the ASF.
