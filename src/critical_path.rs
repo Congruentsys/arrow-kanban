@@ -580,11 +580,30 @@ pub struct CapabilityRouting {
 
 impl CapabilityRouting {
     /// `true` if `agent` may be assigned `item_id` — i.e. it provides every
-    /// capability the item requires. An item with no requirement routes to anyone;
-    /// an item that requires a capability no configured agent provides is withheld
-    /// from everyone (it waits for a capable agent to be configured). That is the
-    /// intended generic semantics — the consumer owns the agent-capability map.
+    /// capability the item requires. An item with no requirement routes to anyone.
+    ///
+    /// **No agent-capability policy → no constraint.** `item_requirements` is
+    /// auto-derived from the board's `-required` tags (see
+    /// [`item_requirements_from_batches`]), so the routing config is populated even
+    /// when the consumer declares NO agent capabilities. In that state there is no
+    /// basis to route BY capability, so every item routes to every agent — the same
+    /// "no-op default" the type documents, now holding for the WIRED default (derived
+    /// requirements + empty policy), not only the pure `::default()`. Withholding a
+    /// `-required` item from everyone here would silently starve the whole board (the
+    /// old rule keyed on `assignee`, not tags, so it routed such work to everyone).
+    ///
+    /// **Once ANY agent capability is declared, the constraint applies:** an item that
+    /// requires a capability the given agent does not provide — including an agent
+    /// absent from a non-empty policy, which provides nothing — is withheld from it.
+    /// The consumer owns the agent-capability map; that is the intended semantics.
     pub fn agent_can_take(&self, item_id: &str, agent: &str) -> bool {
+        // No provider policy at all → capability routing is inert (route to everyone).
+        // Guards the WIRED default: derived requirements + no declared capabilities.
+        // Without this, an always-populated `item_requirements` drives every
+        // `-required` item to the fail-closed `None` arm below → total starvation.
+        if self.agent_capabilities.is_empty() {
+            return true;
+        }
         match self.item_requirements.get(item_id) {
             None => true,
             Some(reqs) if reqs.is_empty() => true,
@@ -611,7 +630,7 @@ pub fn required_capabilities_from_tags(tags: &[String]) -> Vec<String> {
 /// A convenience for consumers that carry the config as a string (a CLI flag, a NATS
 /// request); it bakes in no roster or capability names — only the `;`/`=`/`,` grammar.
 pub fn parse_agent_capabilities(spec: &str) -> HashMap<String, HashSet<String>> {
-    let mut map = HashMap::new();
+    let mut map: HashMap<String, HashSet<String>> = HashMap::new();
     for entry in spec.split(';').map(str::trim).filter(|s| !s.is_empty()) {
         if let Some((agent, caps)) = entry.split_once('=') {
             let set: HashSet<String> = caps
@@ -620,7 +639,9 @@ pub fn parse_agent_capabilities(spec: &str) -> HashMap<String, HashSet<String>> 
                 .filter(|c| !c.is_empty())
                 .map(String::from)
                 .collect();
-            map.insert(agent.trim().to_string(), set);
+            // Union on a repeated agent — last-wins would silently DROP an earlier
+            // declaration's capabilities (`node-a=gpu;node-a=cuda` must yield both).
+            map.entry(agent.trim().to_string()).or_default().extend(set);
         }
     }
     map
@@ -1601,6 +1622,73 @@ mod tests {
             open.iter()
                 .all(|e| e.items.iter().any(|i| i.id == "EX-CAP")),
             "with no capability config the item routes to every agent"
+        );
+    }
+
+    /// REGRESSION (PR #6 review, Mini): the dangerous MIDDLE state the pure-`::default()`
+    /// control above cannot reach — `item_requirements` DERIVED (populated) but no agent
+    /// capability policy declared. Before the empty-policy guard, this fell to the
+    /// fail-closed `None => false` arm and withheld the `-required` item from EVERY
+    /// agent (silent total starvation). The predicate must treat "no policy" as a no-op.
+    #[test]
+    fn agent_can_take_wired_default_no_policy_routes_required_items_to_everyone() {
+        let routing = CapabilityRouting {
+            item_requirements: HashMap::from([("EX-CAP".to_string(), vec!["accel".to_string()])]),
+            agent_capabilities: HashMap::new(), // no policy supplied — the WIRED default
+        };
+        assert!(
+            routing.agent_can_take("EX-CAP", "node-a"),
+            "with requirements derived but NO provider policy, a required item must route to anyone"
+        );
+        assert!(
+            routing.agent_can_take("EX-CAP", "node-z"),
+            "...to EVERY agent — no policy means no capability constraint, not fail-closed"
+        );
+    }
+
+    /// End-to-end proof of the same regression through the real `generate_worklist`
+    /// path (my review's "test the WIRED path, not just `::default()`"): a board with a
+    /// `-required` item but no agent-capability policy must route it to every agent, not
+    /// starve it. This is the case the existing control (both halves empty) skips.
+    #[test]
+    fn worklist_wired_default_no_policy_does_not_starve_required_items() {
+        let items = vec![ItemInfo {
+            id: "EX-CAP".into(),
+            title: "needs the accel capability".into(),
+            item_type: "expedition".into(),
+            status: "backlog".into(),
+            priority: "high".into(),
+            assignee: "-".into(),
+            related: vec![],
+            depends_on: vec![],
+            rank: None,
+        }];
+        let cp = compute_critical_path(&items).unwrap();
+        let agents = vec!["node-a".to_string(), "node-b".to_string()];
+
+        // WIRED default: requirements auto-derived, but the consumer supplied NO policy.
+        let routing = CapabilityRouting {
+            item_requirements: HashMap::from([("EX-CAP".to_string(), vec!["accel".to_string()])]),
+            agent_capabilities: HashMap::new(),
+        };
+        let worklist = generate_worklist(&items, &cp, &agents, &routing, 3);
+        assert!(
+            worklist
+                .iter()
+                .all(|e| e.items.iter().any(|i| i.id == "EX-CAP")),
+            "a -required item with no provider policy must route to EVERY agent (no silent starvation)"
+        );
+    }
+
+    /// AMEND (PR #6 review): a repeated agent in the flat spec must UNION its
+    /// capabilities, not overwrite — last-wins silently dropped an earlier decl's caps.
+    #[test]
+    fn parse_agent_capabilities_unions_a_repeated_agent() {
+        let map = parse_agent_capabilities("node-a=gpu;node-a=cuda");
+        assert_eq!(
+            map.get("node-a"),
+            Some(&HashSet::from(["gpu".to_string(), "cuda".to_string()])),
+            "repeated agent decls must union (gpu ∪ cuda), not last-wins to {{cuda}}"
         );
     }
 
