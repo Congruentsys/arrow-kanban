@@ -24,7 +24,7 @@ kb:CommentCreationShape a sh:NodeShape ;
     sh:property [
         sh:path kb:author ;
         sh:minCount 1 ;
-        sh:message "comment must have an author (M5|DGX|Mini|Captain)" ] ;
+        sh:message "comment must have an author" ] ;
 
     sh:property [
         sh:path kb:body ;

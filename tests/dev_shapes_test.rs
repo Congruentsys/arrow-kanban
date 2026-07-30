@@ -8,7 +8,7 @@
 //! - declares the correct sh:NodeShape targeting the right kb: class
 //! - has sh:minCount 1 on required fields with sh:message
 //! - has sh:order on all properties (deterministic template generation)
-//! - has sh:in on enum fields (priority, assignee)
+//! - has sh:in on enum fields (priority)
 //! - has ID pattern validation matching actual ID format
 //! - has kb:requiredSection entries with kb:templateHint
 //! - has kb:hasComment reference
@@ -209,7 +209,10 @@ fn priority_has_sh_in_on_shapes_that_require_it() {
 }
 
 #[test]
-fn assignee_has_sh_in_on_shapes_that_require_it() {
+fn assignee_is_required_without_a_fleet_enum() {
+    // D1 (SG-6801): the open engine does NOT bake in the fleet roster. Assignee is a
+    // required field (minCount 1, default "unassigned") — a free string, not an sh:in
+    // enum of agent names (that constraint moves inward to fleet composition).
     let required_assignee = &["expedition.ttl", "chore.ttl", "feature.ttl"];
     for file in required_assignee {
         let content = load_shape(file);
@@ -221,16 +224,12 @@ fn assignee_has_sh_in_on_shapes_that_require_it() {
         let block_end = (pos + 300).min(content.len());
         let block = &content[pos..block_end];
         assert!(
-            block.contains("sh:in"),
-            "{file}: kb:assignee must have sh:in enum constraint"
-        );
-        assert!(
-            block.contains("\"M5\"") && block.contains("\"DGX\"") && block.contains("\"Mini\""),
-            "{file}: kb:assignee sh:in must include M5, DGX, Mini"
-        );
-        assert!(
             block.contains("sh:minCount 1"),
             "{file}: kb:assignee must be sh:minCount 1 for this type"
+        );
+        assert!(
+            !block.contains("\"M5\"") && !block.contains("\"DGX\"") && !block.contains("\"Mini\""),
+            "{file}: kb:assignee must NOT hardcode the fleet roster (D1 move-inward)"
         );
     }
 }

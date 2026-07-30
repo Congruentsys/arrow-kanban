@@ -24,18 +24,21 @@ jobs:
           components: clippy, rustfmt
       - name: fmt
         run: cargo fmt --all --check
-      - name: build (default)
-        run: cargo build --locked --verbose
-      - name: build (client feature)
-        run: cargo build --locked --features client --verbose
-      - name: test (default)
-        run: cargo test --locked --verbose
-      - name: test (client feature)
-        run: cargo test --locked --features client --verbose
-      - name: clippy (default)
-        run: cargo clippy --all-targets --locked -- -D warnings
-      - name: clippy (client feature)
-        run: cargo clippy --all-targets --locked --features client -- -D warnings
+      # 3 feature profiles × both workspace crates (lib + server) — E-AK2.
+      - name: build (workspace, default)
+        run: cargo build --workspace --locked --verbose
+      - name: build (workspace, no default features)
+        run: cargo build --workspace --locked --no-default-features --verbose
+      - name: build (workspace, all features)
+        run: cargo build --workspace --locked --all-features --verbose
+      - name: test (workspace, default)
+        run: cargo test --workspace --locked --verbose
+      - name: test (workspace, no default features)
+        run: cargo test --workspace --locked --no-default-features --verbose
+      - name: test (workspace, all features)
+        run: cargo test --workspace --locked --all-features --verbose
+      - name: clippy (workspace, all targets + features)
+        run: cargo clippy --workspace --all-targets --locked --all-features -- -D warnings
 
   # (b)(c)(d) The BLOCKING export gate — closed-vocabulary scan, no board/research
   # data, license + SPDX. A closed-source leak fails the build.

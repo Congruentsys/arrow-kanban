@@ -31,10 +31,9 @@ kb:ChoreShape a sh:NodeShape ;
 
     sh:property [
         sh:path kb:assignee ; sh:order 2 ;
-        sh:in ( "M5" "DGX" "Mini" "unassigned" ) ;
         sh:minCount 1 ;
         sh:defaultValue "unassigned" ;
-        sh:message "assignee required: M5|DGX|Mini|unassigned" ] ;
+        sh:message "assignee required" ] ;
 
     sh:property [
         sh:path kb:tags ; sh:order 3 ;

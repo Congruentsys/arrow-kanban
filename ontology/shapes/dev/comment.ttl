@@ -39,9 +39,8 @@ kb:CommentShape a sh:NodeShape ;
 
     sh:property [
         sh:path kb:author ; sh:order 2 ;
-        sh:in ( "M5" "DGX" "Mini" "Captain" ) ;
         sh:minCount 1 ;
-        sh:message "author required: M5|DGX|Mini|Captain" ] ;
+        sh:message "author required" ] ;
 
     sh:property [
         sh:path kb:body ; sh:order 3 ;

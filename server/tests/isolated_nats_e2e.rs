@@ -3,8 +3,8 @@
 //!
 //! Proves the direct-`async_nats` rewrite of the server bootstrap still serves
 //! board CRUD over `kanban.cmd.>` **and** publishes each mutation as a v1.0
-//! `ShipEvent`-shaped envelope to the durable `KANBAN_EVENTS` JetStream — the
-//! exact contract the former `noesis-ship` `NatsServiceBuilder` provided.
+//! event envelope to the durable `KANBAN_EVENTS` JetStream — the exact contract
+//! the prior server loop provided.
 //!
 //! **Never touches the live fleet bus (4222):** it spawns its own `nats-server
 //! -js` on an OS-assigned free port and its own server binary on a temp store.
