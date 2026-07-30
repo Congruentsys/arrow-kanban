@@ -3121,7 +3121,7 @@ fn print_client_response(command: &str, response: &serde_json::Value) {
                     let desc = t.get("description").and_then(|v| v.as_str()).unwrap_or("");
                     println!("  {name:12} {desc}");
                 }
-                println!("\nUsage: nk templates <type>");
+                println!("\nUsage: arrow-kanban templates <type>");
             }
         }
         "hdd.paper" | "hdd.hypothesis" | "hdd.experiment" | "hdd.measure" | "hdd.idea"

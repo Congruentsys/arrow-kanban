@@ -613,7 +613,7 @@ fn research_shapes_contain_no_state_transition_sparql() {
         let content = load_shape(file);
         assert!(
             !content.contains("sh:SPARQLConstraint") && !content.contains("sh:sparql"),
-            "{file}: must NOT contain SPARQL constraints — state transitions belong in EX-3220"
+            "{file}: must NOT contain SPARQL constraints — state transitions belong in the workflow shapes (-3220"
         );
     }
 }

@@ -287,7 +287,7 @@ fn all_shapes_have_required_sections_with_template_hints() {
         );
         assert!(
             content.contains("kb:templateHint"),
-            "{file}: missing kb:templateHint — required for nk templates output"
+            "{file}: missing kb:templateHint — required for arrow-kanban templates output"
         );
         assert!(
             content.contains("kb:sectionName"),
@@ -375,7 +375,7 @@ fn comment_shape_has_all_7_properties() {
     for path in required_paths {
         assert!(
             content.contains(path),
-            "comment.ttl: missing property {path} (required by CommentsTable schema from EX-3244)"
+            "comment.ttl: missing property {path} (required by the CommentsTable schema)"
         );
     }
 }
@@ -513,7 +513,7 @@ fn dev_shapes_contain_no_state_transition_sparql() {
         let content = load_shape(file);
         assert!(
             !content.contains("sh:SPARQLConstraint") && !content.contains("sh:sparql"),
-            "{file}: must NOT contain SPARQL constraints — state transitions belong in EX-3220 (workflow shapes)"
+            "{file}: must NOT contain SPARQL constraints — state transitions belong in the workflow shapes (workflow shapes)"
         );
     }
 }

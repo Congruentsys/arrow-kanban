@@ -111,7 +111,8 @@ pub fn validate_item(batch: &RecordBatch) -> ValidationReport {
     if body_empty && let Some(sev) = body_severity {
         violations.push(Violation {
             field: "body".to_string(),
-            message: "body is empty — use: nk update <ID> --body-file /tmp/body.md".to_string(),
+            message: "body is empty — use: arrow-kanban update <ID> --body-file /tmp/body.md"
+                .to_string(),
             severity: sev,
         });
     }
@@ -180,10 +181,13 @@ pub fn suggest_fixes(report: &ValidationReport) -> Vec<String> {
         .violations
         .iter()
         .map(|v| match v.field.as_str() {
-            "assignee" => format!("nk update {} --assign M5", report.item_id),
-            "body" => format!("nk update {} --body-file /tmp/body.md", report.item_id),
-            "priority" => format!("nk update {} --priority medium", report.item_id),
-            _ => format!("nk update {} # fix {}", report.item_id, v.field),
+            "assignee" => format!("arrow-kanban update {} --assign <agent>", report.item_id),
+            "body" => format!(
+                "arrow-kanban update {} --body-file /tmp/body.md",
+                report.item_id
+            ),
+            "priority" => format!("arrow-kanban update {} --priority medium", report.item_id),
+            _ => format!("arrow-kanban update {} # fix {}", report.item_id, v.field),
         })
         .collect()
 }
@@ -589,8 +593,8 @@ mod tests {
         let fixes = suggest_fixes(&report);
         assert!(!fixes.is_empty());
         assert!(
-            fixes.iter().all(|f| f.starts_with("nk update ")),
-            "all fix suggestions should start with 'nk update'"
+            fixes.iter().all(|f| f.starts_with("arrow-kanban update ")),
+            "all fix suggestions should start with 'arrow-kanban update'"
         );
     }
 
@@ -736,7 +740,7 @@ mod tests {
         let report = validate_item(&batch);
         let out = format_report(&report, true);
         assert!(out.contains("Suggested fixes:"));
-        assert!(out.contains("nk update "));
+        assert!(out.contains("arrow-kanban update "));
     }
 
     // ── format_board_summary ────────────────────────────────────────────────

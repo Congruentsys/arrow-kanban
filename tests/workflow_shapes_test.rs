@@ -379,7 +379,7 @@ fn mutations_documents_implementation_reference() {
     let content = load_shape("mutations.ttl");
     assert!(
         content.contains("EX-3244") || content.contains("touch_updated_at"),
-        "mutations.ttl: should reference EX-3244 or touch_updated_at (the implementation)"
+        "mutations.ttl: should reference touch_updated_at (the implementation)"
     );
 }
 

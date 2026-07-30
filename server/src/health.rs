@@ -224,8 +224,7 @@ impl HealthGate {
             // Not a Warning. The store is diverging from disk.
             eprintln!(
                 "kanban: 🔴 ENTERING DEGRADED MODE — {reason}. Mutations will be REFUSED; reads \
-                 continue. Writes are not durable, and a restart would discard in-memory state. \
-                 See HZ-6053."
+                 continue. Writes are not durable, and a restart would discard in-memory state."
             );
             self.health = Health::Degraded {
                 reason,

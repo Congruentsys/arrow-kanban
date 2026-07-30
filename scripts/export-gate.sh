@@ -90,12 +90,38 @@ if [ -n "$provhits" ]; then
 fi
 
 # The upstream shell alias and the upstream contributor guide are project-internal.
+# ALL LINES, not just comments (E2-followup review, DGX1). The leaks that actually reach a
+# user are in PRINTED STRINGS — `format!("nk update ...")` was the copy-paste remediation the
+# CLI handed people, while the doc comment four lines above already said `arrow-kanban`. A
+# comment-only scan is green in exactly that case. `\bnk ` cannot match inside a word
+# ("I think about it" does not match), so all-lines costs no false positives here.
 aliashits=$(grep -rnE '(\bCLAUDE\b|\bnk [a-z][a-z-]*\b)' $SCAN_DIRS 2>/dev/null \
-    | grep -E ':[0-9]+:[[:space:]]*(//|#|\*)' \
     | grep -vE 'export-gate|red-battery' || true)
 if [ -n "$aliashits" ]; then
     echo "$aliashits" | head -20 >&2
     fail "upstream alias/guide reference (\`nk <cmd>\` or CLAUDE) in the open tree (above) — the public binary is \`arrow-kanban\`."
+fi
+
+# ── (b5) Tracker IDs inside user-facing PROSE (all lines) ───────────────────
+# (b4) covers comments. It cannot see a citation inside a STRING LITERAL that the binary
+# PRINTS — e.g. `eprintln!("... See HZ-6053.")`, which told a public user to consult an ID
+# they cannot resolve. Extending (b4) to all lines is not an option: this repo's tests are
+# full of legitimate ID DATA (`"id": "EX-3001"`, `["EX-1300","CH-1301"]`), and a gate that
+# fires on the product's own fixtures gets switched off.
+#
+# The discriminator is PROSE ADJACENCY: a citation sits next to words ("See HZ-6053",
+# "planned for VY-3009"), whereas fixture data is a bare quoted token. Requiring a
+# lowercase word immediately before the ID separates them — verified in both directions by
+# the red battery, which asserts it catches a printed citation AND spares four real
+# fixture shapes taken from this tree.
+PROSE_ID="[a-z]{2,} +$PROV_ID"
+prosehits=$(grep -rnE "$PROSE_ID" $SCAN_DIRS 2>/dev/null \
+    | grep -vE 'export-gate|red-battery' \
+    | sed -E "s/$PROV_OK//g" \
+    | grep -E "$PROSE_ID" || true)
+if [ -n "$prosehits" ]; then
+    echo "$prosehits" | head -20 >&2
+    fail "tracker reference(s) inside user-facing prose (above) — a printed string must not cite an ID the reader cannot resolve."
 fi
 
 # ── (c) No board-content or research/eval data ───────────────────────────────

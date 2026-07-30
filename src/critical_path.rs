@@ -816,7 +816,7 @@ pub fn format_campaign_roadmap(camp_id: &str, members: &[String], items: &[ItemI
     let mut out = format!("Campaign {camp_id} — {member_count} member voyage(s) [partOf]:\n");
     if member_count == 0 {
         out.push_str(&format!(
-            "  (no members yet — a voyage joins with: nk update VY-XXXX --relate partOf:{camp_id})\n"
+            "  (no members yet — a voyage joins with: arrow-kanban update VY-XXXX --relate partOf:{camp_id})\n"
         ));
         return out;
     }

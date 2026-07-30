@@ -203,7 +203,7 @@ fn load_state(data_dir: &std::path::Path) -> ServerState {
                 eprintln!(
                     "kanban: 🔴 SUSPECT LOAD — the interrupted save is NEWER than the state about \
                      to be loaded ({}). Serving this is probably a ROLLBACK. Inspect the \
-                     quarantine before trusting the board; see HZ-6053.",
+                     quarantine before trusting the board.",
                     rec.suspect
                         .iter()
                         .map(|p| p.display().to_string())
@@ -231,7 +231,7 @@ fn load_state(data_dir: &std::path::Path) -> ServerState {
     if health.is_degraded() {
         eprintln!(
             "kanban: 🔴 STARTING DEGRADED — {}. Serving READS ONLY; mutations are refused until \
-             the store accepts writes. See HZ-6053.",
+             the store accepts writes.",
             health.reason().unwrap_or("store is not writable")
         );
     }

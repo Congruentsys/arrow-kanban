@@ -125,7 +125,7 @@ fn acked_writes_survive_a_restart_even_when_the_disk_fills() {
 
     assert!(
         lost.is_empty(),
-        "HZ-6053 INVARIANT VIOLATED — the server acked {} write(s) that a restart lost: {:?}. \
+        "DURABILITY INVARIANT VIOLATED — the server acked {} write(s) that a restart lost: {:?}. \
          This is the exact incident shape: success returned for work the board later forgot.",
         lost.len(),
         lost
@@ -298,7 +298,7 @@ fn an_interrupted_save_is_never_silently_superseded() {
     assert_eq!(
         std::fs::read_to_string(quarantine.join("items.parquet.tmp")).expect("read"),
         "PAR1truncated",
-        "the interrupted write must be preserved verbatim — during HZ-6053 it was the only \
+        "the interrupted write must be preserved verbatim — in the motivating incident it was the only \
          copy of two months of state"
     );
     assert!(

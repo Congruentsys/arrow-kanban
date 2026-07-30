@@ -344,7 +344,7 @@ pub fn format_type_listing(summaries: &[TypeSummary]) -> String {
     }
 
     lines.push(String::new());
-    lines.push("Usage: nk templates <type>".to_string());
+    lines.push("Usage: arrow-kanban templates <type>".to_string());
 
     lines.join("\n") + "\n"
 }
@@ -528,7 +528,7 @@ kb:TestShape a sh:NodeShape ;
         assert!(output.contains("expedition"));
         assert!(output.contains("Multi-phase feature work"));
         assert!(output.contains("chore"));
-        assert!(output.contains("nk templates <type>"));
+        assert!(output.contains("arrow-kanban templates <type>"));
     }
 
     #[test]

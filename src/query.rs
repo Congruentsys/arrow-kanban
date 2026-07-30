@@ -1272,19 +1272,19 @@ mod tests {
 
     #[test]
     fn test_parse_what_blocks() {
-        let f = parse_nl_query("what blocks EX-3050");
+        let f = parse_nl_query("what blocks EX-1234");
         assert_eq!(
             f.relation_query,
-            Some(RelationQuery::BlockersOf("EX-3050".to_string()))
+            Some(RelationQuery::BlockersOf("EX-1234".to_string()))
         );
     }
 
     #[test]
     fn test_parse_blockers_of() {
-        let f = parse_nl_query("blockers of EX-3050");
+        let f = parse_nl_query("blockers of EX-1234");
         assert_eq!(
             f.relation_query,
-            Some(RelationQuery::BlockersOf("EX-3050".to_string()))
+            Some(RelationQuery::BlockersOf("EX-1234".to_string()))
         );
     }
 
@@ -1299,10 +1299,10 @@ mod tests {
 
     #[test]
     fn test_parse_deps_of() {
-        let f = parse_nl_query("deps of EX-3100");
+        let f = parse_nl_query("deps of EX-1234");
         assert_eq!(
             f.relation_query,
-            Some(RelationQuery::DependenciesOf("EX-3100".to_string()))
+            Some(RelationQuery::DependenciesOf("EX-1234".to_string()))
         );
     }
 
