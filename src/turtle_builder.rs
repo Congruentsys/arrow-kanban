@@ -5,7 +5,7 @@
 //! from the item type's shape file and generates a turtle block stub with correct
 //! namespace prefixes and predicate placeholders.
 //!
-//! Used by `nk create hypothesis "Title"` to auto-populate the body with a turtle
+//! Used by `arrow-kanban create hypothesis "Title"` to auto-populate the body with a turtle
 //! block linking to the parent paper, experiment, etc.
 
 use crate::item_type::ItemType;

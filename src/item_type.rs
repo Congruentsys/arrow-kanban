@@ -61,7 +61,7 @@ impl ItemType {
             ItemType::Hazard => "HZ",
             ItemType::Signal => "SG",
             ItemType::Feature => "FT",
-            // Research board — keep readable prefixes (EXPR-131.1 > XP-131.1)
+            // Research board — keep readable prefixes (EXPR-1234.1 > XP-131.1)
             ItemType::Paper => "PAPER",
             ItemType::Hypothesis => "H",
             ItemType::Experiment => "EXPR",
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_campaign_is_a_dev_container_type() {
-        // EX-6249: Campaign is a first-class dev-board item type (the graph-structured
+        // Campaign is a first-class dev-board item type (the graph-structured
         // "campaign" node above voyages). Prefix CA-, parses from name/aliases, dev board.
         assert_eq!(ItemType::Campaign.prefix(), "CA");
         assert_eq!(ItemType::Campaign.as_str(), "campaign");

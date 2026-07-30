@@ -160,7 +160,7 @@ impl RelationsStore {
     }
 
     /// Source IDs of every non-deleted edge `source --predicate--> target_id` (edges pointing AT
-    /// `target_id` with exactly this predicate), sorted + deduped. EX-6250: a campaign's member
+    /// `target_id` with exactly this predicate), sorted + deduped. A campaign's member
     /// voyages are the sources of `partOf` edges to it — `incoming_by_predicate(campaign_id, "partOf")`.
     pub fn incoming_by_predicate(&self, target_id: &str, predicate: &str) -> Vec<String> {
         let mut sources = Vec::new();
@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(store.query_relations("EXP-999").len(), 0);
     }
 
-    /// EX-6250: campaign membership is DATA — the sources of `partOf` edges to the campaign, never
+    /// campaign membership is DATA — the sources of `partOf` edges to the campaign, never
     /// a hardcoded list. `incoming_by_predicate` is exactly that resolution.
     #[test]
     fn incoming_by_predicate_resolves_campaign_members_from_partof_edges() {

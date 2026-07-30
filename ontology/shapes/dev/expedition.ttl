@@ -4,8 +4,8 @@
 # + comment shape reference + template generation annotations.
 #
 # Consumed by:
-#   EX-3221 (nk templates): generates body template from kb:requiredSection entries
-#   EX-3223 (nk validate): checks sh:minCount/sh:in/sh:pattern violations
+#   arrow-kanban templates: generates body template from kb:requiredSection entries
+#   arrow-kanban validate: checks sh:minCount/sh:in/sh:pattern violations
 #
 # V12/V13 equivalent: .arrow-kanban/templates/nautical/expedition.md
 # What's new: machine-readable, queryable, theme-independent, validates on write
@@ -25,7 +25,7 @@ kb:ExpeditionShape a sh:NodeShape ;
         sh:path kb:id ; sh:order 0 ;
         sh:pattern "^EX-\\d{4,}$" ;
         sh:minCount 1 ; sh:maxCount 1 ;
-        sh:message "ID must match EX-NNNN format (e.g. EX-3218)" ] ;
+        sh:message "ID must match EX-NNNN format (e.g. EX-1234)" ] ;
 
     sh:property [
         sh:path kb:priority ; sh:order 1 ;
@@ -48,31 +48,31 @@ kb:ExpeditionShape a sh:NodeShape ;
     sh:property [
         sh:path kb:dependsOn ; sh:order 4 ;
         sh:minCount 0 ;
-        sh:description "IDs of blocking items — set immediately after creation via nk update EX-XXXX --depends-on" ] ;
+        sh:description "IDs of blocking items — set immediately after creation via arrow-kanban update EX-XXXX --depends-on" ] ;
 
     sh:property [
         sh:path kb:related ; sh:order 5 ;
         sh:minCount 0 ;
-        sh:description "Parent voyage or related items (e.g. VY-3211) — set via nk update EX-XXXX --related" ] ;
+        sh:description "Parent voyage or related items (e.g. VY-1234) — set via arrow-kanban update EX-XXXX --related" ] ;
 
     sh:property [
         sh:path kb:updated_at ; sh:order 6 ;
         sh:datatype xsd:dateTime ;
         sh:minCount 0 ;
-        sh:description "Auto-set on any mutation (added by EX-3244)" ] ;
+        sh:description "Auto-set on any mutation" ] ;
 
     sh:property [
         sh:path kb:priority_rank ; sh:order 7 ;
         sh:datatype xsd:integer ;
         sh:minCount 0 ;
-        sh:description "Numeric priority for sorting: 1=highest (added by EX-3244)" ] ;
+        sh:description "Numeric priority for sorting: 1=highest" ] ;
 
     sh:property [
         sh:path kb:body ; sh:order 10 ;
         sh:minCount 1 ;
-        sh:message "body required — use: nk templates expedition" ] ;
+        sh:message "body required — use: arrow-kanban templates expedition" ] ;
 
-    # --- Body section structure (drives nk templates expedition output) ---
+    # --- Body section structure (drives arrow-kanban templates expedition output) ---
 
     kb:requiredSection [
         kb:sectionName "V12/V13 Parity Check" ; sh:order 1 ;

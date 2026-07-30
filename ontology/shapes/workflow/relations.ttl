@@ -1,9 +1,9 @@
 # relations.ttl — SHACL valid relation predicate shapes
 #
-# EX-3220 Phase 6: Valid Relation Predicate Shapes
+# Valid Relation Predicate Shapes
 #
 # Encodes which predicates are valid between which type pairs.
-# These correspond to the relation predicates defined in kanban.ttl (EX-3217).
+# These correspond to the relation predicates defined in kanban.ttl.
 #
 # V12/V13 equivalent: hardcoded validation in relations table code
 # What's new: constraints as inspectable SHACL data

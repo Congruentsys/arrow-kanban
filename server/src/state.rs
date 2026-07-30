@@ -11,7 +11,7 @@ pub struct ServerState {
     pub store: KanbanStore,
     pub relations: RelationsStore,
     pub data_dir: PathBuf,
-    /// Write-durability gate (CH-6056). Refuses mutations when the store is not
+    /// Write-durability gate. Refuses mutations when the store is not
     /// accepting durable writes, instead of acking writes a restart would lose.
     pub health: HealthGate,
 }

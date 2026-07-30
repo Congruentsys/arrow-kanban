@@ -367,7 +367,7 @@ fn validate_enum(value: &str, allowed: &[&str], param_name: &str) -> Result<(), 
     }
 }
 
-/// Validate that an item ID matches the expected format (e.g., "EX-3150", "VOY-155").
+/// Validate that an item ID matches the expected format (e.g., "EX-1234", "VOY-42").
 fn validate_item_id(id: &str) -> Result<(), String> {
     // Allow: PREFIX-NUMBER, PREFIX-NUMBER.NUMBER (paper-scoped), HNUMBER.NUMBER
     let valid = id

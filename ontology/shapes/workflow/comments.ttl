@@ -1,9 +1,9 @@
 # comments.ttl — SHACL comment lifecycle shapes
 #
-# EX-3220 Phase 4: Comment Lifecycle Shapes
+# Comment Lifecycle Shapes
 #
 # Validates comment creation requirements and resolution transitions.
-# Works with CommentsTable from EX-3244.
+# Works with CommentsTable from .
 #
 # V12/V13 equivalent: none (comments were unstructured markdown sections)
 
@@ -35,7 +35,7 @@ kb:CommentCreationShape a sh:NodeShape ;
         sh:path kb:created_at ;
         sh:datatype xsd:dateTime ;
         sh:minCount 1 ;
-        sh:message "comment must have created_at timestamp (auto-set by nk comment)" ] .
+        sh:message "comment must have created_at timestamp (auto-set by arrow-kanban comment)" ] .
 
 kb:CommentResolutionShape a sh:NodeShape ;
     sh:targetClass kb:Comment ;

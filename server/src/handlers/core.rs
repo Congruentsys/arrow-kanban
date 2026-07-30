@@ -21,7 +21,7 @@ struct CreateRequest {
     #[serde(default)]
     depends_on: Vec<String>,
     body: Option<String>,
-    /// CH-6109: typed relationships as `predicate:TARGET-ID`, applied at create time.
+    /// typed relationships as `predicate:TARGET-ID`, applied at create time.
     #[serde(default)]
     relate: Vec<String>,
 }
@@ -38,7 +38,7 @@ struct CreateResponse {
     relationships: Vec<String>,
 }
 
-/// Parse `predicate:TARGET` specs and validate each against the vocabulary (CH-6109).
+/// Parse `predicate:TARGET` specs and validate each against the vocabulary.
 ///
 /// Validation happens BEFORE any mutation, and the first bad edge rejects the whole
 /// request — a partially-related item is worse than a refused one, because the caller
@@ -98,12 +98,12 @@ pub(crate) fn handle_create(
         )
     })?;
 
-    // CH-6109: parse and VALIDATE every typed edge BEFORE creating the item, so a bad
+    // parse and VALIDATE every typed edge BEFORE creating the item, so a bad
     // relationship never leaves a half-related item behind. All-or-nothing.
     let edges = parse_and_validate(&req.relate, item_type.as_str(), None)?;
 
     // `related`/`dependsOn` edges ALSO project into the flat columns, so roadmap /
-    // critical-path / worklist / nk show keep reading exactly what they read today. The
+    // critical-path / worklist / arrow-kanban show keep reading exactly what they read today. The
     // flat lists are a projection of the typed edges, written in the same operation —
     // never a second independently-authored source of truth.
     let mut related = req.related;
@@ -190,7 +190,7 @@ pub(crate) fn handle_move(payload: &[u8], store: &mut KanbanStore) -> Result<Vec
         col.value(0).to_string()
     };
 
-    // Atomic exclusive claim (CH-4905): a `move … in_progress --assign X` is a claim. Reject it
+    // Atomic exclusive claim: a `move … in_progress --assign X` is a claim. Reject it
     // if the item is already in_progress under a different agent (without --force) — turns
     // assignment into a true mutex instead of last-writer-wins.
     if req.status == "in_progress"
@@ -211,8 +211,8 @@ pub(crate) fn handle_move(payload: &[u8], store: &mut KanbanStore) -> Result<Vec
         )
         .map_err(|e| error_response(&format!("{e}"), "MOVE_FAILED"))?;
 
-    // CH-4905: make the claim STICK — `move --assign` must set the assignee column, not just the
-    // run-provenance agent (previously it didn't, hence the `nk update --assign` follow-up).
+    // make the claim STICK — `move --assign` must set the assignee column, not just the
+    // run-provenance agent (previously it didn't, hence the `arrow-kanban update --assign` follow-up).
     if let Some(assignee) = req.assignee.as_deref() {
         store
             .update_assignee(&req.id, Some(assignee))
@@ -241,7 +241,7 @@ pub(crate) fn handle_move(payload: &[u8], store: &mut KanbanStore) -> Result<Vec
     })
 }
 
-// ── Ratify (CH-4906) ─────────────────────────────────────────────────────────
+// ── Ratify ─────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct RatifyRequest {
@@ -285,16 +285,16 @@ struct UpdateRequest {
     body: Option<String>,
     related: Option<Vec<String>>,
     depends_on: Option<Vec<String>>,
-    /// CH-6109: ADD typed edges (`predicate:TARGET`). Additive — unlike `related` /
+    /// ADD typed edges (`predicate:TARGET`). Additive — unlike `related` /
     /// `depends_on`, which replace.
     #[serde(default)]
     relate: Vec<String>,
-    /// CH-6109: REMOVE typed edges (`predicate:TARGET`).
+    /// REMOVE typed edges (`predicate:TARGET`).
     #[serde(default)]
     unrelate: Vec<String>,
 }
 
-/// The flat column a `related` / `dependsOn` predicate projects to (CH-6109). Only those
+/// The flat column a `related` / `dependsOn` predicate projects to. Only those
 /// two predicates project; the rest live purely as typed edges.
 fn flat_projection_col(predicate: &str) -> Option<usize> {
     use arrow_kanban::schema::items_col;
@@ -305,7 +305,7 @@ fn flat_projection_col(predicate: &str) -> Option<usize> {
     }
 }
 
-/// Mirror a `related` / `dependsOn` edge INTO its flat column (CH-6109, additive) so a typed
+/// Mirror a `related` / `dependsOn` edge INTO its flat column (additive) so a typed
 /// edge added on EDIT is visible to roadmap / critical-path / worklist / show.
 fn add_flat_projection(store: &mut KanbanStore, id: &str, predicate: &str, target: &str) {
     let Some(col) = flat_projection_col(predicate) else {
@@ -316,10 +316,10 @@ fn add_flat_projection(store: &mut KanbanStore, id: &str, predicate: &str, targe
     }
 }
 
-/// Remove a `related` / `dependsOn` edge FROM its flat column (CH-6109, subtractive).
+/// Remove a `related` / `dependsOn` edge FROM its flat column (subtractive).
 /// Returns `true` if the flat column actually held the edge and it was removed.
 ///
-/// CH-6742 defect 2: this must run INDEPENDENTLY of the typed-relation removal. A flat-only
+/// This must run INDEPENDENTLY of the typed-relation removal. A flat-only
 /// edge (written by `--depends-on`/`--related`, which create no typed edge) has no typed
 /// relation to remove, so gating the flat removal behind `remove_relation` succeeding left
 /// it stuck — `--unrelate` reported `relationships_removed: []` and changed nothing.
@@ -353,7 +353,7 @@ pub(crate) fn handle_update(
         .get_item(&req.id)
         .map_err(|e| error_response(&format!("{e}"), "NOT_FOUND"))?;
 
-    // CH-6109: validate every edge BEFORE mutating anything, so a bad relationship never
+    // validate every edge BEFORE mutating anything, so a bad relationship never
     // leaves the item half-updated.
     let source_type = arrow_kanban::relation_vocab::type_from_id(&req.id).unwrap_or("");
     let add_edges = parse_and_validate(&req.relate, source_type, Some(&req.id))?;
@@ -404,7 +404,7 @@ pub(crate) fn handle_update(
         updated.push("depends_on");
     }
 
-    // CH-6109: apply typed edges. Additive/subtractive — adding one never silently
+    // apply typed edges. Additive/subtractive — adding one never silently
     // deletes the others, which is the footgun --related/--depends-on still carry.
     let mut added = Vec::new();
     for (pred, target) in &add_edges {
@@ -425,7 +425,7 @@ pub(crate) fn handle_update(
     }
     let mut removed = Vec::new();
     for (pred, target) in &del_edges {
-        // CH-6742 defect 2: remove BOTH projections INDEPENDENTLY. A flat-only edge (created
+        // Remove BOTH projections INDEPENDENTLY. A flat-only edge (created
         // by --depends-on/--related, no typed edge) makes remove_relation error, so gating the
         // flat removal behind it left --unrelate a silent no-op. Attempt each; report removed
         // if EITHER held the edge.
@@ -517,19 +517,19 @@ struct ListRequest {
     item_type: Option<String>,
     board: Option<String>,
     assignee: Option<String>,
-    /// CH-4307: post-filter by resolution (terminal states only — completed,
+    /// post-filter by resolution (terminal states only — completed,
     /// superseded, wont_do, duplicate, obsolete, merged, refuted).
     #[serde(default)]
     resolution: Option<String>,
-    /// CH-4307: post-filter by priority (critical, high, medium, low).
+    /// post-filter by priority (critical, high, medium, low).
     #[serde(default)]
     priority: Option<String>,
-    /// CH-4307: post-filter by tag (exact match, multiple = AND). The client
+    /// post-filter by tag (exact match, multiple = AND). The client
     /// sends `Vec<String>` under the `tags` key; default to empty so older
     /// clients without the field continue to work.
     #[serde(default)]
     tags: Vec<String>,
-    /// CH-4307: post-filter to items with all dependencies met (unblocked).
+    /// post-filter to items with all dependencies met (unblocked).
     #[serde(default)]
     ready: bool,
 }
@@ -544,10 +544,10 @@ pub(crate) fn handle_list(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>
         req.assignee.as_deref(),
     );
 
-    // CH-4307: apply the post-filters that previously only existed in the
+    // apply the post-filters that previously only existed in the
     // local-mode handler (`Commands::List` in arrow-kanban/src/main.rs:1992).
     // Server-mode requests were silently dropping these fields because they
-    // were not on `ListRequest` at all, so `nk list --tag X` returned the full
+    // were not on `ListRequest` at all, so `arrow-kanban list --tag X` returned the full
     // board regardless of tag.
     if let Some(ref res_filter) = req.resolution {
         items.retain(|batch| {
@@ -656,7 +656,7 @@ pub(crate) fn handle_show(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>
             }))
         }
         Some("json") => {
-            // CH-6645: the FULL item as JSON — its own fields PLUS comments (with
+            // the FULL item as JSON — its own fields PLUS comments (with
             // timestamps) and the status-history transitions read from the runs
             // table. This is what makes the FA-E3 time-to-orient measure computable
             // from the CLI (claim transition → first work artifact). Previously this
@@ -803,7 +803,7 @@ pub(crate) fn handle_validate(
 
 // ── Export ───────────────────────────────────────────────────────────────────
 
-/// CH-6443: `id` is `Option` (the client sends `id: null` for a board-wide export; the
+/// `id` is `Option` (the client sends `id: null` for a board-wide export; the
 /// old non-optional `String` rejected it with "invalid type: null, expected a string").
 /// `format`/`board`/`item_type`/`status` carry the board-export query + the requested
 /// format so `--format json` is honored instead of always falling back to markdown.
@@ -819,18 +819,18 @@ struct ExportRequest {
     item_type: Option<String>,
     #[serde(default)]
     status: Option<String>,
-    /// CH-6555: board-wide pagination — the row offset of the requested page.
+    /// board-wide pagination — the row offset of the requested page.
     #[serde(default)]
     offset: Option<usize>,
-    /// CH-6555: board-wide pagination — the max rows in the page. `None` = whole board
-    /// in one reply (the pre-CH-6555 behavior; only safe for small boards, since a full
+    /// board-wide pagination — the max rows in the page. `None` = whole board
+    /// in one reply (the pre-pagination behavior; only safe for small boards, since a full
     /// ~4577-item JSON exceeds the NATS max_payload and the reply never arrives).
     #[serde(default)]
     limit: Option<usize>,
 }
 
 /// Slice a paginated window `[offset, offset+limit)` out of a batched query result, spanning
-/// `RecordBatch` boundaries (CH-6555). Returns the batches (each a zero-copy `slice`) whose rows
+/// `RecordBatch` boundaries. Returns the batches (each a zero-copy `slice`) whose rows
 /// fall in the window, in order. An out-of-range window yields an empty vec. This is what keeps a
 /// board-wide export page under the NATS max_payload — the client requests fixed-size pages and
 /// reassembles them, instead of the server building one oversized reply that never sends.
@@ -864,7 +864,7 @@ pub(crate) fn handle_export(payload: &[u8], store: &KanbanStore) -> Result<Vec<u
     let format = req.format.as_deref().unwrap_or("item");
 
     // Single-item export — honor the requested format. Previously this ALWAYS returned
-    // markdown, so `nk export --id X --format json` silently fell back to YAML client-side.
+    // markdown, so `arrow-kanban export --id X --format json` silently fell back to YAML client-side.
     if let Some(id) = &req.id {
         let item = store
             .get_item(id)
@@ -890,7 +890,7 @@ pub(crate) fn handle_export(payload: &[u8], store: &KanbanStore) -> Result<Vec<u
         None,
     );
     let total: usize = items.iter().map(|b| b.num_rows()).sum();
-    // CH-6555: page the result when the client requests a `limit`, so no single reply exceeds the
+    // page the result when the client requests a `limit`, so no single reply exceeds the
     // NATS max_payload (a full ~4577-item JSON does, and the reply then never arrives → the client
     // deadline elapses). `limit == None` keeps the whole-board reply for backward compatibility.
     let offset = req.offset.unwrap_or(0);
@@ -933,7 +933,7 @@ struct RoadmapRequest {
     flat: bool,
     #[serde(default)]
     ready: bool,
-    /// EX-6250: roll up a campaign (CA-XXXX) — its partOf member voyages, %-done, and aggregate.
+    /// roll up a campaign (CA-XXXX) — its partOf member voyages, %-done, and aggregate.
     #[serde(default)]
     campaign: Option<String>,
 }
@@ -951,12 +951,12 @@ pub(crate) fn handle_roadmap(
     }
 
     let mut items = critical_path::extract_items(&all_batches);
-    // CH-6484: resolve the typed `implements`/`spawns` expedition→voyage edges into `related`
+    // resolve the typed `implements`/`spawns` expedition→voyage edges into `related`
     // so an `implements`-only expedition counts toward its voyage — identically to the local CLI.
     critical_path::fold_typed_voyage_memberships(&mut items, relations);
 
-    // EX-6250: campaign rollup — the SAME shared library renderer the local CLI uses, so
-    // `nk roadmap --campaign` renders identically in local and --server mode.
+    // campaign rollup — the SAME shared library renderer the local CLI uses, so
+    // `arrow-kanban roadmap --campaign` renders identically in local and --server mode.
     if let Some(camp_id) = &req.campaign {
         let members = relations.incoming_by_predicate(camp_id, "partOf");
         let view = critical_path::format_campaign_roadmap(camp_id, &members, &items);
@@ -1283,7 +1283,7 @@ pub(crate) fn handle_blocked(store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
                     .as_any()
                     .downcast_ref::<StringArray>()
                     .expect("dep values");
-                // CH-6742 defect 3: an empty-string dep is not a real dependency — skip it,
+                // An empty-string dep is not a real dependency — skip it,
                 // so a legacy `[""]` row (or any stray empty element) is not reported blocked
                 // here while `--ready` (critical_path) already treats `""` as satisfied. Left
                 // unfiltered, the same item read BOTH blocked and ready, which cannot be true.
@@ -1320,7 +1320,7 @@ struct HddCreateRequest {
     paper: Option<u32>,
     /// Hypothesis ID to link an experiment to (e.g. H130.1).
     hypothesis: Option<String>,
-    /// Experiment ID to link a measure to (optional, e.g. EXPR-130.1).
+    /// Experiment ID to link a measure to (optional, e.g. EXPR-1234.1).
     experiment: Option<String>,
 }
 
@@ -1531,7 +1531,7 @@ pub(crate) fn handle_templates(payload: &[u8], root: &std::path::Path) -> Result
 
 #[cfg(test)]
 mod ratify_tests {
-    //! CH-4906: first-class phase ratification through the server handler.
+    //! first-class phase ratification through the server handler.
     use super::*;
     use arrow_kanban::crud::{CreateItemInput, KanbanStore};
     use arrow_kanban::item_type::ItemType;
@@ -1578,7 +1578,7 @@ mod ratify_tests {
 
 #[cfg(test)]
 mod claim_tests {
-    //! CH-4905: atomic exclusive claim through the server's single-writer move handler.
+    //! atomic exclusive claim through the server's single-writer move handler.
     use super::*;
     use arrow_kanban::crud::{CreateItemInput, KanbanStore};
     use arrow_kanban::item_type::ItemType;
@@ -1614,7 +1614,7 @@ mod claim_tests {
         let mut store = KanbanStore::new();
         let id = new_item(&mut store, "Contested");
 
-        // Mini claims it: move succeeds AND the assignee column sticks (the CH-4905 fix).
+        // The first agent claims it: move succeeds AND the assignee column sticks.
         assert!(handle_move(&move_payload(&id, "in_progress", "Mini", false), &mut store).is_ok());
         assert_eq!(assignee_of(&store, &id).as_deref(), Some("Mini"));
 
@@ -1640,7 +1640,7 @@ mod claim_tests {
 
 #[cfg(test)]
 mod ch6443_export_request_tests {
-    //! CH-6443: `nk export --format json` (board-wide) sent `id: null`, which the old
+    //! `arrow-kanban export --format json` (board-wide) sent `id: null`, which the old
     //! non-optional `ExportRequest { id: String }` rejected with
     //! "invalid type: null, expected a string". These pin the deserialization fix.
     use super::ExportRequest;
@@ -1678,7 +1678,7 @@ mod ch6443_export_request_tests {
 
 #[cfg(test)]
 mod ch6555_pagination_tests {
-    //! CH-6555: `slice_batches` must window `[offset, offset+limit)` correctly ACROSS
+    //! `slice_batches` must window `[offset, offset+limit)` correctly ACROSS
     //! `RecordBatch` boundaries — the mechanism that keeps a board-wide export page under
     //! the NATS max_payload (the full ~4577-item reply exceeds it and never arrives).
     use super::slice_batches;
@@ -1747,7 +1747,7 @@ mod ch6555_pagination_tests {
 
 #[cfg(test)]
 mod ch6742_tests {
-    //! CH-6742: `nk update` dependency-edit defects, at the server handler.
+    //! `arrow-kanban update` dependency-edit defects, at the server handler.
     use super::*;
     use arrow_kanban::crud::{CreateItemInput, KanbanStore};
     use arrow_kanban::item_type::ItemType;

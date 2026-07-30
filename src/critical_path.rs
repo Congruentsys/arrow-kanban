@@ -387,20 +387,20 @@ fn trace_longest_path(
 ///
 /// An item belongs to a voyage if its `related` list contains a voyage ID,
 /// or if it IS a voyage.
-/// CH-6484: fold the TYPED expedition→voyage membership edges (`implements` and its
+/// fold the TYPED expedition→voyage membership edges (`implements` and its
 /// inverse `spawns`) into each item's in-memory [`ItemInfo::related`], so the voyage
 /// rollup ([`group_by_voyage`] / [`campaign_aggregate`]) SEES an expedition linked ONLY
-/// via `nk update EX-X --relate implements:VY-Y`.
+/// via `arrow-kanban update EX-X --relate implements:VY-Y`.
 ///
 /// `implements`/`spawns` are **typed-only** — they never project to the flat `related`
 /// column (`relation_vocab::flat_column_for` returns `None` for them), unlike
 /// `related`/`dependsOn`. The rollup resolves membership from `related` alone, so before
 /// this fold an `implements`-only expedition was invisible to the group and it rendered
-/// `[0/0]` (the CH-6484 repro: EX-6470..6480 under VY-6467/6468/6469).
+/// `[0/0]` (the typed-membership repro: expeditions under voyages linked only by typed edges).
 ///
 /// **Query-side only, no data change.** This mutates the in-memory `ItemInfo` set built
 /// for a roadmap view; the stored edges are untouched. The projection semantics of
-/// `implements` stay deliberately typed-only in the store (CLAUDE.md) — this resolves
+/// `implements` stay deliberately typed-only in the store — this resolves
 /// them at read time exactly where the rollup needs them.
 pub fn fold_typed_voyage_memberships(items: &mut [ItemInfo], rel_store: &RelationsStore) {
     let voyage_ids: HashSet<String> = items
@@ -762,7 +762,7 @@ pub fn truncate(s: &str, max: usize) -> String {
 
 // ─── Display Formatting ─────────────────────────────────────────────────────
 
-/// EX-6250: roll a campaign's member voyages up into `(member_count, done_expeditions,
+/// roll a campaign's member voyages up into `(member_count, done_expeditions,
 /// total_expeditions)` — the program aggregate a flat tag can never give. `members` is the set of
 /// member voyage ids (the caller resolves it from `partOf` edges — data, never a hardcoded list).
 ///
@@ -770,7 +770,7 @@ pub fn truncate(s: &str, max: usize) -> String {
 /// must still count toward the program %-done. [`group_by_voyage`] deliberately DROPS fully-done
 /// voyages (right for the active-work roadmap section below — they need no attention), but summing
 /// the aggregate from those filtered groups would make program %-done *fall* the moment a member
-/// voyage finishes — inverting the exact thing the rollup exists to show (PROP-3559, DGX2). Only
+/// voyage finishes — inverting the exact thing the rollup exists to show (DGX2). Only
 /// child items of type `expedition` count — chores/signals are excluded so the "expeditions done"
 /// label is honest. `member_count` counts the member voyages that actually exist as items (a stale
 /// `partOf` id resolves to nothing). Zero members → `(0, 0, 0)` (an empty view, not an error).
@@ -803,7 +803,7 @@ pub fn campaign_aggregate(items: &[ItemInfo], members: &[String]) -> (usize, usi
     (existing_members.len(), done, total)
 }
 
-/// EX-6250: render a campaign's rollup as a String — the header, member count, program %-done
+/// render a campaign's rollup as a String — the header, member count, program %-done
 /// aggregate, and the shared roadmap over ONLY the member voyages (with a cross-voyage critical
 /// path). `members` are the campaign's member voyage ids (the caller resolves them from `partOf`
 /// edges — data, never a hardcoded list). Reuses [`format_roadmap`] — no parallel renderer. A
@@ -816,7 +816,7 @@ pub fn format_campaign_roadmap(camp_id: &str, members: &[String], items: &[ItemI
     let mut out = format!("Campaign {camp_id} — {member_count} member voyage(s) [partOf]:\n");
     if member_count == 0 {
         out.push_str(&format!(
-            "  (no members yet — a voyage joins with: nk update VY-XXXX --relate partOf:{camp_id})\n"
+            "  (no members yet — a voyage joins with: arrow-kanban update VY-XXXX --relate partOf:{camp_id})\n"
         ));
         return out;
     }
@@ -1297,7 +1297,7 @@ mod tests {
         assert!(orphans.contains(&"EX-6".to_string()));
     }
 
-    // ── CH-6484: typed implements/spawns voyage-membership folding ──────────────
+    // ── Typed implements/spawns voyage-membership folding ──────────────────────
 
     /// A bare expedition + voyage with NO flat `related` link between them — the
     /// state the repro hit (`--relate implements:VY-X` writes no flat column).
@@ -1455,7 +1455,7 @@ mod tests {
         assert!(cp.blocked.is_empty());
     }
 
-    // ─── CH-4521: rank-based sort ──────────────────────────────────────────
+    // ─── Rank-based sort ───────────────────────────────────────────────────
 
     /// `sort_key` puts ranked items in front of unranked ones, regardless of
     /// the priority-string. Among ranked items, lower rank wins. Among
@@ -1584,7 +1584,7 @@ mod tests {
         }
     }
 
-    /// EX-6250 (PROP-3559 fix): the campaign rollup over member voyages — the aggregate a flat tag
+    /// The campaign rollup over member voyages — the aggregate a flat tag
     /// cannot give. A COMPLETED member voyage MUST still count toward the program %-done (the
     /// regression DGX2 caught: group_by_voyage drops fully-done voyages, which would make %-done
     /// fall as members finish). Only expeditions count (chores excluded); non-members are excluded;
@@ -1627,7 +1627,7 @@ mod tests {
         assert_eq!(campaign_aggregate(&items, &["VY-z".to_string()]), (0, 0, 0));
     }
 
-    /// EX-6250: the shared campaign renderer (used by BOTH the local CLI and the server) over a
+    /// the shared campaign renderer (used by BOTH the local CLI and the server) over a
     /// 2-voyage-member fixture — header, member count, program aggregate, member listing; and the
     /// zero-members empty view.
     #[test]

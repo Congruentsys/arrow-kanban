@@ -30,7 +30,7 @@ if [ -n "$hits" ]; then
     fail "closed-vocabulary / brand / closed-crate terms found in the open tree (above)."
 fi
 
-# ── (b2) D1 move-inward concept scan (SG-6801 disposition) ───────────────────
+# ── (b2) Move-inward concept scan ────────────────────────────────────────────
 # Fleet-governance concepts that must never re-enter the open engine. The engine
 # treats TAGS as opaque data, so a bare "pending-ratification" tag STRING is fine —
 # what moves inward is the enforcement GATE machinery (its identifiers), the
@@ -57,6 +57,73 @@ if [ -n "$rosterhits" ]; then
     fail "a hardcoded fleet-roster list (two+ agent names comma-separated) is in the open tree (above) — the open engine derives agents from board DATA, never a baked-in roster."
 fi
 
+# ── (b4) Provenance-reference scan (CH-6825) ────────────────────────────────
+# Internal tracker IDs and the upstream CLI alias must not appear in the COMMENTS of
+# the public tree: a reader outside the origin project cannot resolve "CH-6109", so
+# it is noise that leaks process without informing anyone.
+#
+# Scanned on COMMENT LINES ONLY, deliberately. The ID grammar itself is this tool's
+# OWN data model — arrow-kanban items ARE named `EX-1234` — and test fixtures
+# legitimately carry IDs like "EXP-1" on code lines. A gate that flagged those would
+# fire on the product working correctly.
+#
+# Synthetic doc examples stay legal, allowlisted BY NUMBER so docs can still show the
+# format. Allowlisted refs are STRIPPED before the test rather than used to exclude the
+# line: a line carrying BOTH a synthetic example and a real ticket ref must still fail
+# (excluding the whole line would let a real leak ride along on an example — coverage
+# that is not coverage).
+# Four-or-more digits only: the origin tracker allocates from 3001 up, while this
+# repo's test fixtures use one- and two-digit IDs (EX-1, VY-8) in their explanatory
+# comments. Requiring 4+ digits keeps the gate off the product's own tests. A
+# three-digit citation would slip; that is the deliberate trade — a gate that fires
+# on legitimate fixtures gets disabled, which protects nothing.
+PROV_ID='\b(CH|EX|EXP|VY|VOY|SG|PROP|EXPR|HZ|CHORE|PAPER)-[0-9]{4,}(\.[0-9]+)?\b'
+PROV_OK='\b(CH|EX|EXP|VY|VOY|SG|PROP|EXPR|HZ|CHORE|PAPER)-(42|1234|1235|1240)(\.[0-9]+)?\b'
+provhits=$(grep -rnE "$PROV_ID" $SCAN_DIRS 2>/dev/null \
+    | grep -E ':[0-9]+:[[:space:]]*(//|#|\*)' \
+    | grep -vE 'export-gate|red-battery' \
+    | sed -E "s/$PROV_OK//g" \
+    | grep -E "$PROV_ID" || true)
+if [ -n "$provhits" ]; then
+    echo "$provhits" | head -20 >&2
+    fail "internal tracker reference(s) in comments of the open tree (above) — strip the citation and keep the rationale; synthetic doc examples (-42/-1234) are allowed."
+fi
+
+# The upstream shell alias and the upstream contributor guide are project-internal.
+# ALL LINES, not just comments (E2-followup review, DGX1). The leaks that actually reach a
+# user are in PRINTED STRINGS — `format!("nk update ...")` was the copy-paste remediation the
+# CLI handed people, while the doc comment four lines above already said `arrow-kanban`. A
+# comment-only scan is green in exactly that case. `\bnk ` cannot match inside a word
+# ("I think about it" does not match), so all-lines costs no false positives here.
+aliashits=$(grep -rnE '(\bCLAUDE\b|\bnk [a-z][a-z-]*\b)' $SCAN_DIRS 2>/dev/null \
+    | grep -vE 'export-gate|red-battery' || true)
+if [ -n "$aliashits" ]; then
+    echo "$aliashits" | head -20 >&2
+    fail "upstream alias/guide reference (\`nk <cmd>\` or CLAUDE) in the open tree (above) — the public binary is \`arrow-kanban\`."
+fi
+
+# ── (b5) Tracker IDs inside user-facing PROSE (all lines) ───────────────────
+# (b4) covers comments. It cannot see a citation inside a STRING LITERAL that the binary
+# PRINTS — e.g. `eprintln!("... See HZ-6053.")`, which told a public user to consult an ID
+# they cannot resolve. Extending (b4) to all lines is not an option: this repo's tests are
+# full of legitimate ID DATA (`"id": "EX-3001"`, `["EX-1300","CH-1301"]`), and a gate that
+# fires on the product's own fixtures gets switched off.
+#
+# The discriminator is PROSE ADJACENCY: a citation sits next to words ("See HZ-6053",
+# "planned for VY-3009"), whereas fixture data is a bare quoted token. Requiring a
+# lowercase word immediately before the ID separates them — verified in both directions by
+# the red battery, which asserts it catches a printed citation AND spares four real
+# fixture shapes taken from this tree.
+PROSE_ID="[a-z]{2,} +$PROV_ID"
+prosehits=$(grep -rnE "$PROSE_ID" $SCAN_DIRS 2>/dev/null \
+    | grep -vE 'export-gate|red-battery' \
+    | sed -E "s/$PROV_OK//g" \
+    | grep -E "$PROSE_ID" || true)
+if [ -n "$prosehits" ]; then
+    echo "$prosehits" | head -20 >&2
+    fail "tracker reference(s) inside user-facing prose (above) — a printed string must not cite an ID the reader cannot resolve."
+fi
+
 # ── (c) No board-content or research/eval data ───────────────────────────────
 # Persisted board state (Parquet), the runtime data dir, and research/eval
 # corpora are instance data, not the tool — they must never be committed.
@@ -73,7 +140,7 @@ fi
 # A published FOSS crate resolves PURELY from crates.io. A `path = "../…"`
 # dependency or a `nusy-*`/`noesis-*` dep would pull closed monorepo code — and
 # would BUILD FINE on a machine that has the monorepo checked out adjacent, so the
-# clean-clone build alone can't be trusted to catch it (EXPR-6756 finding). Scan
+# clean-clone build alone can't be trusted to catch it. Scan
 # the manifest directly. (`[[bin]] path = "src/main.rs"` is a target path, not a
 # dependency — only parent-relative `path = "../` deps are flagged.)
 # Scan EVERY workspace manifest (root + members), not just the root — a closed dep

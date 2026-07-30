@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Tests for crates/arrow-kanban/ontology/shapes/workflow/*.ttl
 //!
-//! EX-3220: SHACL Shapes — Board + Workflow (WIP limits, state machine, terminal states)
+//! SHACL Shapes — Board + Workflow (WIP limits, state machine, terminal states)
 //!
 //! Validates:
 //! - boards.ttl: WIP SPARQLConstraints for both boards
@@ -379,7 +379,7 @@ fn mutations_documents_implementation_reference() {
     let content = load_shape("mutations.ttl");
     assert!(
         content.contains("EX-3244") || content.contains("touch_updated_at"),
-        "mutations.ttl: should reference EX-3244 or touch_updated_at (the implementation)"
+        "mutations.ttl: should reference touch_updated_at (the implementation)"
     );
 }
 
