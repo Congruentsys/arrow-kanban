@@ -19,241 +19,40 @@ pub mod research;
 #[cfg(feature = "git")]
 pub mod source;
 
-use core::*;
-use relations::*;
-#[cfg(feature = "research")]
-use research::*;
-#[cfg(feature = "git")]
-use source::*;
-
-use crate::state::ServerState;
-use arrow_kanban::item_type::ItemType;
-use serde::Serialize;
+use crate::engine::KanbanEngine;
+use serde::{Deserialize, Serialize};
 
 /// Unified error response sent back to NATS clients.
-#[derive(Debug, Serialize)]
+///
+/// `Deserialize` (with an owned `code`) lets the engine round-trip an
+/// already-serialized error — a handler's `error_response(...)` bytes — back
+/// into a typed [`crate::engine::KanbanReply::Error`] without changing a single
+/// byte on the wire (the round-trip is exact for any value `error_response`
+/// produced).
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
-    pub code: &'static str,
+    pub code: String,
 }
 
 /// Default board states.
 pub(crate) const DEFAULT_STATES: &[&str] = &["backlog", "in_progress", "review", "done"];
 
-/// Dispatch a NATS message to the appropriate handler based on subject.
+/// Dispatch a NATS message through the typed engine.
 ///
-/// Returns the JSON-serialized response bytes.
-pub fn dispatch(subject: &str, payload: &[u8], state: &mut ServerState) -> Vec<u8> {
-    let command = subject.strip_prefix("kanban.cmd.").unwrap_or(subject);
-
-    // admit mutations BEFORE they touch memory. Once the store is not
-    // durable, refusing up front leaves nothing to roll back — the alternative
-    // is applying a change we cannot keep and then discovering it too late.
-    // Reads are deliberately unaffected: a degraded board is still worth
-    // reading, and going dark would be its own outage.
-    if is_mutation(command)
-        && let Err(reason) = state
-            .health
-            .admit_mutation(&crate::health::store_dir(&state.data_dir))
-    {
-        return error_response(
-            &format!(
-                "REFUSED — the kanban store is not accepting durable writes ({reason}). Your \
-                 change was NOT applied. Reads still work. Free the underlying problem (usually a \
-                 full disk); the server re-probes and recovers automatically."
-            ),
-            "STORE_DEGRADED",
-        );
-    }
-
-    let mut result = match command {
-        // Core CRUD + analytics
-        "create" => handle_create(payload, &mut state.store, &mut state.relations),
-        "move" => handle_move(payload, &mut state.store),
-        "ratify" => handle_ratify(payload, &mut state.store),
-        "update" => handle_update(payload, &mut state.store, &mut state.relations),
-        "comment" => handle_comment(payload, &mut state.store),
-        "rank" => handle_rank(payload, &mut state.store),
-        "list" => handle_list(payload, &state.store),
-        "show" => handle_show(payload, &state.store),
-        "query" => Err(error_response(
-            "query cross-searches proposals, which are not part of the open kanban engine",
-            "UNSUPPORTED",
-        )),
-        "board" => handle_board(payload, &state.store),
-        "stats" => handle_stats(payload, &state.store),
-        "delete" => handle_delete(payload, &mut state.store),
-        "validate" => handle_validate(&state.store, &state.relations),
-        "export" => handle_export(payload, &state.store),
-        "roadmap" => handle_roadmap(payload, &state.store, &state.relations),
-        "critical-path" => handle_critical_path(&state.store),
-        "pipeline-health" => Err(error_response(
-            "pipeline-health is a fleet analytics command, not part of the open kanban engine",
-            "UNSUPPORTED",
-        )),
-        "worklist" => handle_worklist(payload, &state.store),
-        "next-id" => handle_next_id(payload, &state.store),
-        "history" => handle_history(payload, &state.store),
-        "blocked" => handle_blocked(&state.store),
-        "templates" => handle_templates(payload, &state.data_dir),
-        // HDD create commands
-        "hdd.paper" => handle_hdd_create(
-            payload,
-            &mut state.store,
-            &mut state.relations,
-            ItemType::Paper,
-        ),
-        "hdd.hypothesis" => handle_hdd_create(
-            payload,
-            &mut state.store,
-            &mut state.relations,
-            ItemType::Hypothesis,
-        ),
-        "hdd.experiment" => handle_hdd_create(
-            payload,
-            &mut state.store,
-            &mut state.relations,
-            ItemType::Experiment,
-        ),
-        "hdd.measure" => handle_hdd_create(
-            payload,
-            &mut state.store,
-            &mut state.relations,
-            ItemType::Measure,
-        ),
-        "hdd.idea" => handle_hdd_create(
-            payload,
-            &mut state.store,
-            &mut state.relations,
-            ItemType::Idea,
-        ),
-        "hdd.literature" => handle_hdd_create(
-            payload,
-            &mut state.store,
-            &mut state.relations,
-            ItemType::Literature,
-        ),
-        "hdd.validate" => handle_hdd_validate(&state.store, &state.relations),
-        "hdd.registry" => handle_hdd_registry(&state.store, &state.relations),
-        // Relations
-        "relation.add" => handle_relation_add(payload, &mut state.relations),
-        "relation.query" => handle_relation_query(payload, &state.relations),
-        // Git commands — graph-native versioning
-        "git.push" | "git.pull" | "git.clone" => serialize_response(&serde_json::json!({
-            "message": format!(
-                "git.{} acknowledged. Graph git stores are currently per-agent \
-                 (local per-agent git-store directories). Server-managed git \
-                 state is planned.",
-                command.strip_prefix("git.").unwrap_or(command)
-            ),
-        })),
-        "git.log" | "git.blame" | "git.rebase" => serialize_response(&serde_json::json!({
-            "detail": format!(
-                "git.{}: operates on local graph store. Use --store to specify path. \
-                 Server-side git operations are planned for a future release.",
-                command.strip_prefix("git.").unwrap_or(command)
-            ),
-        })),
-        // HDD experiment run tracking (feature-gated)
-        #[cfg(feature = "research")]
-        "hdd.run" => handle_hdd_run(payload, &mut state.store, &state.data_dir),
-        #[cfg(feature = "research")]
-        "hdd.run.status" => handle_hdd_run_status(payload, &state.data_dir),
-        #[cfg(feature = "research")]
-        "hdd.run.complete" => handle_hdd_run_complete(payload, &mut state.store, &state.data_dir),
-        // Source code transport (feature-gated)
-        #[cfg(feature = "git")]
-        "source.push" => handle_source_push(payload, &state.data_dir),
-        #[cfg(feature = "git")]
-        "source.pull" => handle_source_pull(payload, &state.data_dir),
-        #[cfg(feature = "git")]
-        "source.branches" => handle_source_branches(&state.data_dir),
-        #[cfg(feature = "git")]
-        "source.delete" => handle_source_delete(payload, &state.data_dir),
-        _ => Err(error_response(
-            &format!("Unknown command: {command}"),
-            "UNKNOWN_COMMAND",
-        )),
-    };
-
-    // After successful mutations, persist state.
-    //
-    // A persist failure is NOT a warning to step over. The
-    // mutation is already in memory but not on disk, so the store has diverged
-    // and a restart would discard it. Report the failure to the caller instead
-    // of acking a write we could not keep, and degrade the gate so the NEXT
-    // mutation is refused before it ever touches memory.
-    if result.is_ok() && is_mutation(command) {
-        let mut persist_error: Option<String> = None;
-
-        if let Err(e) = arrow_kanban::persist::save_store(&state.data_dir, &state.store) {
-            persist_error = Some(format!("store: {e}"));
-        }
-        if is_relation_mutation(command)
-            && let Err(e) = arrow_kanban::persist::save_relations(&state.data_dir, &state.relations)
-        {
-            persist_error.get_or_insert(format!("relations: {e}"));
-        }
-        match persist_error {
-            Some(err) => {
-                state.health.record_persist_failure(command, &err);
-                result = Err(error_response(
-                    &format!(
-                        "'{command}' was applied in memory but COULD NOT BE PERSISTED ({err}). \
-                         Treat this write as LOST — it will not survive a restart. The server is \
-                         now DEGRADED and further mutations are refused until the store accepts \
-                         writes again."
-                    ),
-                    "STORE_NOT_DURABLE",
-                ));
-            }
-            None => state.health.record_persist_success(),
-        }
-    }
-
-    match result {
-        Ok(bytes) => bytes,
-        Err(bytes) => bytes,
-    }
-}
-
-fn is_mutation(command: &str) -> bool {
-    matches!(
-        command,
-        "create"
-            | "move"
-            | "ratify"
-            | "update"
-            | "comment"
-            | "delete"
-            | "rank"
-            | "hdd.paper"
-            | "hdd.hypothesis"
-            | "hdd.experiment"
-            | "hdd.measure"
-            | "hdd.idea"
-            | "hdd.literature"
-            | "relation.add"
-            | "pr.create"
-            | "pr.review"
-            | "pr.merge"
-            | "pr.close"
-            | "pr.comment"
-            | "pr.revise"
-            | "pr.resolve"
-            | "hdd.run"
-            | "hdd.run.complete"
-    )
-}
-
-fn is_relation_mutation(command: &str) -> bool {
-    command == "relation.add"
+/// A thin wire-entry shim over [`KanbanEngine::dispatch`] — the one typed
+/// semantics. The former string-dispatch (command match + admission gate +
+/// persist-or-degrade) now lives in [`crate::engine`]; this only forwards.
+/// Kept as a free function so the existing integration-test harness (which
+/// calls `dispatch(subject, payload, &mut engine)`) is unchanged.
+pub fn dispatch(subject: &str, payload: &[u8], engine: &mut KanbanEngine) -> Vec<u8> {
+    engine.dispatch(subject, payload)
 }
 
 pub(crate) fn error_response(msg: &str, code: &'static str) -> Vec<u8> {
     serde_json::to_vec(&ErrorResponse {
         error: msg.to_string(),
-        code,
+        code: code.to_string(),
     })
     .unwrap_or_else(|_| br#"{"error":"serialization failed","code":"INTERNAL"}"#.to_vec())
 }
@@ -263,11 +62,6 @@ pub(crate) fn parse_payload<T: for<'de> serde::Deserialize<'de>>(
 ) -> Result<T, Vec<u8>> {
     serde_json::from_slice(payload)
         .map_err(|e| error_response(&format!("Invalid JSON: {e}"), "INVALID_PAYLOAD"))
-}
-
-pub(crate) fn serialize_response<T: Serialize>(value: &T) -> Result<Vec<u8>, Vec<u8>> {
-    serde_json::to_vec(value)
-        .map_err(|e| error_response(&format!("Serialization error: {e}"), "INTERNAL"))
 }
 
 pub(crate) fn states_as_strings() -> Vec<String> {

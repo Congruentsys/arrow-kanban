@@ -1,17 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! Server state — all stores bundled into one struct.
+//! Server state.
+//!
+//! The stores and the write-durability gate now live in
+//! [`crate::engine::KanbanEngine`] — the one typed semantics. `ServerState` is
+//! retained as an alias for it so the server's own binary and the integration
+//! test harness (which construct `ServerState { store, relations, data_dir,
+//! health }` and hold a `&mut ServerState`) keep working unchanged.
 
-use crate::health::HealthGate;
-use arrow_kanban::crud::KanbanStore;
-use arrow_kanban::relations::RelationsStore;
-use std::path::PathBuf;
-
-/// All server state in one place.
-pub struct ServerState {
-    pub store: KanbanStore,
-    pub relations: RelationsStore,
-    pub data_dir: PathBuf,
-    /// Write-durability gate. Refuses mutations when the store is not
-    /// accepting durable writes, instead of acking writes a restart would lose.
-    pub health: HealthGate,
-}
+pub use crate::engine::KanbanEngine as ServerState;

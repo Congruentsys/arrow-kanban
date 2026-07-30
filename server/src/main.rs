@@ -15,7 +15,6 @@ use std::time::Duration;
 use arrow_kanban::backup::{self, BackupConfig};
 use arrow_kanban::persist;
 use arrow_kanban_server::events::detect_mutation;
-use arrow_kanban_server::handlers;
 use arrow_kanban_server::state::ServerState;
 use clap::Parser;
 use futures::StreamExt;
@@ -127,8 +126,8 @@ async fn run(args: ServiceArgs, mut state: ServerState) -> Result<(), Box<dyn st
                 let command = strip_prefix(&subject);
 
                 // Dispatch: the kanban server routes every command through the
-                // catch-all dispatcher (it never registered per-command handlers).
-                let response = handlers::dispatch(&subject, &msg.payload, &mut state);
+                // typed engine (decode → apply → encode).
+                let response = state.dispatch(&subject, &msg.payload);
 
                 // Reply to the requester.
                 if let Some(reply_to) = msg.reply
