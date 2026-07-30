@@ -186,11 +186,20 @@ fn goldens_cover_exactly_the_compiled_verbs() {
         .collect();
     let actual: std::collections::BTreeSet<String> = goldens.keys().cloned().collect();
 
-    let stale: Vec<&String> = actual.difference(&expected).collect();
-    assert!(
-        stale.is_empty(),
-        "goldens contain keys for verbs the engine no longer compiles (stale pins): {stale:?}"
-    );
+    // The stale-pin direction (a golden with no matching compiled verb) is only exact
+    // when EVERY verb is compiled. Under a reduced feature set (`research`/`git` off) the
+    // goldens legitimately pin the feature-gated verbs (`hdd.run.*`, `source.*`), so this
+    // direction is checked only when both features are on. The strict direction below (a
+    // compiled verb with NO golden — the one that would let a verb escape byte-compat
+    // coverage) always runs, in every profile.
+    #[cfg(all(feature = "research", feature = "git"))]
+    {
+        let stale: Vec<&String> = actual.difference(&expected).collect();
+        assert!(
+            stale.is_empty(),
+            "goldens contain keys for verbs the engine no longer compiles (stale pins): {stale:?}"
+        );
+    }
     let uncovered: Vec<&String> = expected.difference(&actual).collect();
     assert!(
         uncovered.is_empty(),
