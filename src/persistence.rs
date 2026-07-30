@@ -269,9 +269,9 @@ impl PersistenceEngine {
     /// live Parquet files are still *valid* — so we still load them, and a
     /// truncated `.tmp` is never trusted as a store.
     ///
-    /// What changed (CH-6055 / HZ-6053): we no longer *delete* the evidence.
+    /// What changed: we no longer *delete* the evidence.
     /// The previous implementation unlinked the WAL and left orphaned `.tmp`
-    /// files to be silently overwritten by the next save. During HZ-6053 that
+    /// files to be silently overwritten by the next save. In the motivating incident that
     /// interrupted write (`items.parquet.tmp`) was the **newest copy of the
     /// store in existence** — the live Parquet was two months stale — and
     /// recovery would have destroyed it. It survived only by luck.
@@ -381,7 +381,7 @@ impl PersistenceEngine {
     }
 }
 
-/// Outcome of an interrupted-save recovery (CH-6055).
+/// Outcome of an interrupted-save recovery.
 #[derive(Debug, Default, Clone)]
 pub struct WalRecovery {
     /// Whether an interrupted save was detected (WAL and/or orphaned `.tmp`).
@@ -551,9 +551,9 @@ mod tests {
         assert!(!data_dir.join("_wal.json").exists());
     }
 
-    // ─── CH-6055: quarantine instead of discard (HZ-6053) ──────────────────
+    // ─── Quarantine instead of discard ───────────────────────────
 
-    /// The WAL must be PRESERVED, not unlinked. During HZ-6053 the interrupted
+    /// The WAL must be PRESERVED, not unlinked. In the motivating incident the interrupted
     /// save was the only copy of two months of state.
     #[test]
     fn test_wal_recovery_quarantines_wal_instead_of_deleting() {
@@ -605,7 +605,7 @@ mod tests {
         );
     }
 
-    /// The HZ-6053 shape: the interrupted write is NEWER than the live file,
+    /// The failure shape: the interrupted write is NEWER than the live file,
     /// so loading the live state is a rollback. That must be flagged.
     #[test]
     fn test_tmp_newer_than_live_parquet_is_flagged_suspect() {

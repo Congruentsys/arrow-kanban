@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Tests for crates/arrow-kanban/ontology/shapes/workflow/*.ttl
 //!
-//! EX-3220: SHACL Shapes — Board + Workflow (WIP limits, state machine, terminal states)
+//! SHACL Shapes — Board + Workflow (WIP limits, state machine, terminal states)
 //!
 //! Validates:
 //! - boards.ttl: WIP SPARQLConstraints for both boards

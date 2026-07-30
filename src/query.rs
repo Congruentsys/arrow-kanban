@@ -15,9 +15,9 @@ use regex::Regex;
 /// Relationship query types for dependency/blocker traversal.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RelationQuery {
-    /// "what blocks EX-3050" → find items that block the target
+    /// "what blocks EX-1234" → find items that block the target
     BlockersOf(String),
-    /// "dependencies of VOY-155" → find items the target depends on
+    /// "dependencies of VOY-42" → find items the target depends on
     DependenciesOf(String),
 }
 
@@ -43,21 +43,21 @@ pub struct QueryFilters {
 ///
 /// Examples:
 /// - "in-progress expeditions assigned to Mini" → status=in_progress, type=expedition, assignee=Mini
-/// - "EXP-1257" → id_pattern=EXP-1257
+/// - "EXP-1234" → id_pattern=EXP-1234
 /// - "arrow migration" → text_query="arrow migration"
 /// - "backlog chores" → status=backlog, type=chore
 pub fn parse_nl_query(query: &str) -> QueryFilters {
     let mut filters = QueryFilters::default();
     let mut remaining_words: Vec<&str> = Vec::new();
     let words: Vec<&str> = query.split_whitespace().collect();
-    // Check for ID pattern first (e.g., "EXP-1257", "VOY-145")
+    // Check for ID pattern first (e.g., "EXP-1234", "VOY-42")
     let id_re = Regex::new(r"^[A-Z]+-\d+$").expect("valid regex");
     if words.len() == 1 && id_re.is_match(words[0]) {
         filters.id_pattern = Some(words[0].to_string());
         return filters;
     }
 
-    // Check for relationship queries: "what blocks EX-3050", "blockers of EX-3050"
+    // Check for relationship queries: "what blocks EX-1234", "blockers of EX-1234"
     let blocks_re =
         Regex::new(r"(?i)(?:what\s+blocks|blockers?\s+(?:of|for))\s+([A-Z]+-\d+)").unwrap();
     if let Some(caps) = blocks_re.captures(query) {
@@ -67,7 +67,7 @@ pub fn parse_nl_query(query: &str) -> QueryFilters {
         return filters;
     }
 
-    // Check for dependency queries: "dependencies of VOY-155", "deps of EX-3050"
+    // Check for dependency queries: "dependencies of VOY-42", "deps of EX-1234"
     let deps_re =
         Regex::new(r"(?i)(?:dependenc(?:ies|y)|deps?)\s+(?:of|for)\s+([A-Z]+-\d+)").unwrap();
     if let Some(caps) = deps_re.captures(query) {
@@ -86,7 +86,7 @@ pub fn parse_nl_query(query: &str) -> QueryFilters {
         // Continue parsing to also extract type filters (e.g., "expeditions above 3100")
     }
 
-    // Check for ID range patterns: "EXP-3100-3150" or "EX-3100-3150"
+    // Check for ID range patterns: "EXP-1234-1240" or "EX-1234-1240"
     let range_re = Regex::new(r"(?i)([A-Z]+)-(\d+)-(\d+)").unwrap();
     if words.len() == 1
         && let Some(caps) = range_re.captures(words[0])

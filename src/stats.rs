@@ -569,7 +569,7 @@ mod tests {
         let velocity = compute_velocity(store.runs_batches(), 4);
 
         assert_eq!(velocity.len(), 4);
-        // The most recent week should have 2 completions (EX-1300 and CH-1301)
+        // The most recent week should have 2 completions (EX-1234 and CH-1235)
         let total: u32 = velocity.iter().map(|v| v.completed).sum();
         assert_eq!(total, 2);
         // Last week (most recent) should have the completions

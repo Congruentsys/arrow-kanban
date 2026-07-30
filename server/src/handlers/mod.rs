@@ -46,7 +46,7 @@ pub(crate) const DEFAULT_STATES: &[&str] = &["backlog", "in_progress", "review",
 pub fn dispatch(subject: &str, payload: &[u8], state: &mut ServerState) -> Vec<u8> {
     let command = subject.strip_prefix("kanban.cmd.").unwrap_or(subject);
 
-    // CH-6056: admit mutations BEFORE they touch memory. Once the store is not
+    // admit mutations BEFORE they touch memory. Once the store is not
     // durable, refusing up front leaves nothing to roll back — the alternative
     // is applying a change we cannot keep and then discovering it too late.
     // Reads are deliberately unaffected: a degraded board is still worth
@@ -178,7 +178,7 @@ pub fn dispatch(subject: &str, payload: &[u8], state: &mut ServerState) -> Vec<u
 
     // After successful mutations, persist state.
     //
-    // CH-6056 / HZ-6053: a persist failure is NOT a warning to step over. The
+    // A persist failure is NOT a warning to step over. The
     // mutation is already in memory but not on disk, so the store has diverged
     // and a restart would discard it. Report the failure to the caller instead
     // of acking a write we could not keep, and degrade the gate so the NEXT

@@ -49,7 +49,7 @@ jobs:
       - name: FOSS export gate
         run: bash scripts/export-gate.sh
 
-  # The committed mutation demonstration (CH-6659): proves the export gate goes RED on
+  # The committed mutation demonstration: proves the export gate goes RED on
   # each closed-material injection, so the gate can never silently become vacuous.
   red-battery:
     runs-on: ubuntu-latest

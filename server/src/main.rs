@@ -185,9 +185,9 @@ fn strip_prefix(subject: &str) -> &str {
 }
 
 fn load_state(data_dir: &std::path::Path) -> ServerState {
-    // CH-6055 / HZ-6053: an interrupted save leaves a WAL and/or orphaned
+    // An interrupted save leaves a WAL and/or orphaned
     // `*.parquet.tmp`. Quarantine that evidence BEFORE loading — the next save
-    // would otherwise overwrite it, and during HZ-6053 the interrupted write
+    // would otherwise overwrite it, and during the incident the interrupted write
     // was the only copy of two months of state. Never delete it.
     match arrow_kanban::persistence::PersistenceEngine::recover_wal(data_dir) {
         Ok(rec) if rec.recovered => {
@@ -224,8 +224,8 @@ fn load_state(data_dir: &std::path::Path) -> ServerState {
         eprintln!("Failed to load relations from {data_dir:?}: {e}");
         std::process::exit(1);
     });
-    // CH-6056: probe the store before serving. Coming up "ready" on a store
-    // that cannot take a write is how HZ-6053 stayed invisible for days.
+    // probe the store before serving. Coming up "ready" on a store
+    // that cannot take a write is how the incident stayed invisible for days.
     let mut health = arrow_kanban_server::health::HealthGate::new();
     health.probe_now(&arrow_kanban_server::health::store_dir(data_dir));
     if health.is_degraded() {

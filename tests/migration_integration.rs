@@ -123,7 +123,7 @@ related: [EXP-2]
 depends_on: []
 ---
 
-# EXP-1: Expedition 1
+# Expedition 1
 
 Body.
 
@@ -168,7 +168,7 @@ related: [EXP-1, EXP-2, EXP-3]
 depends_on: []
 ---
 
-# VOY-1: Test Campaign
+# Test Campaign
 "#,
     )
     .unwrap();
@@ -251,7 +251,7 @@ related: [H130.1]
 depends_on: []
 ---
 
-# EXPR-130.1
+# EXPR-1234.1
 "#,
     )
     .unwrap();
@@ -440,7 +440,7 @@ related: [VOY-145, EXP-1258, EXP-1259]
 depends_on: [EXP-1258, EXP-1259]
 ---
 
-# EXP-42: Arrow-Kanban Migration
+# Arrow-Kanban Migration
 
 Complex body with multiple sections.
 "#,

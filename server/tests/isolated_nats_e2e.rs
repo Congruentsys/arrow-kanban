@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! CH-6758 (VY-6695 E2 follow-up) — end-to-end against an **isolated** nats-server.
+//! End-to-end against an **isolated** nats-server.
 //!
 //! Proves the direct-`async_nats` rewrite of the server bootstrap still serves
 //! board CRUD over `kanban.cmd.>` **and** publishes each mutation as a v1.0

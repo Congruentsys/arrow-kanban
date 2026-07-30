@@ -65,7 +65,7 @@ pub struct Violation {
 /// Aggregated report for one item.
 #[derive(Debug)]
 pub struct ValidationReport {
-    /// Item ID (e.g. "EX-3212").
+    /// Item ID (e.g. "EX-1234").
     pub item_id: String,
     /// Item type string (e.g. "expedition").
     pub item_type: String,
@@ -173,7 +173,7 @@ pub fn validate_item(batch: &RecordBatch) -> ValidationReport {
 
 /// Generate suggested fix commands for all violations in a report.
 ///
-/// Returns one `nk update ...` command per violation, formatted so the user
+/// Returns one `arrow-kanban update ...` command per violation, formatted so the user
 /// can copy-paste to fix the issue.
 pub fn suggest_fixes(report: &ValidationReport) -> Vec<String> {
     report

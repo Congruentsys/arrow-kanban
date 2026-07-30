@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Minimal base64 encode/decode — no external crate dependency.
 //!
-//! Used by both `nk source` CLI (main.rs) and the kanban-server handlers
+//! Used by both `arrow-kanban source` CLI (main.rs) and the kanban-server handlers
 //! for git bundle transport over NATS.
 
 const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

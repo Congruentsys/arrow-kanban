@@ -43,12 +43,12 @@ kb:HazardShape a sh:NodeShape ;
         sh:path kb:updated_at ; sh:order 4 ;
         sh:datatype xsd:dateTime ;
         sh:minCount 0 ;
-        sh:description "Auto-set on any mutation (added by EX-3244)" ] ;
+        sh:description "Auto-set on any mutation" ] ;
 
     sh:property [
         sh:path kb:body ; sh:order 10 ;
         sh:minCount 1 ;
-        sh:message "body required — use: nk templates hazard" ] ;
+        sh:message "body required — use: arrow-kanban templates hazard" ] ;
 
     # --- Body section structure ---
 

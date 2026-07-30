@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Tests for crates/arrow-kanban/ontology/shapes/dev/*.ttl
 //!
-//! EX-3218: SHACL Shapes — Dev Board Item Types (6 types)
+//! SHACL Shapes — Dev Board Item Types (6 types)
 //!
 //! Validates that each shape file:
 //! - exists and is readable
@@ -210,7 +210,7 @@ fn priority_has_sh_in_on_shapes_that_require_it() {
 
 #[test]
 fn assignee_is_required_without_a_fleet_enum() {
-    // D1 (SG-6801): the open engine does NOT bake in the fleet roster. Assignee is a
+    // D1: the open engine does NOT bake in the fleet roster. Assignee is a
     // required field (minCount 1, default "unassigned") — a free string, not an sh:in
     // enum of agent names (that constraint moves inward to fleet composition).
     let required_assignee = &["expedition.ttl", "chore.ttl", "feature.ttl"];
@@ -504,7 +504,7 @@ fn all_groups_have_rdfs_label_and_sh_order() {
 }
 
 // ---------------------------------------------------------------------------
-// No SHACL state transition constraints (those belong in EX-3220)
+// No SHACL state transition constraints (those belong in the workflow shapes)
 // ---------------------------------------------------------------------------
 
 #[test]

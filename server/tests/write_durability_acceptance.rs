@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-//! HZ-6053 acceptance test (CH-6070) — the composite property, end to end.
+//! Write-durability acceptance test — the composite property, end to end.
 //!
 //! # What this proves
 //!
 //! > **Every write the server ACKNOWLEDGED is present after a restart.**
 //!
-//! That single invariant *is* the HZ-6053 incident. On 2026-07-18/19 a full disk
+//! That single invariant *is* the incident. A full disk
 //! stopped the kanban server persisting. It kept serving correct state from
 //! memory and kept returning **success** to agents, so `create` / `move` /
 //! `pr merge` all looked like they landed — and a restart silently reverted the
@@ -15,10 +15,10 @@
 //!
 //! Each mitigation is already unit-tested in isolation:
 //!
-//! - **CH-6056** — an unpersistable write is refused, not acked
-//! - **CH-6055** — an interrupted save is quarantined; a `.tmp` newer than the
+//! - an unpersistable write is refused, not acked
+//! - an interrupted save is quarantined; a `.tmp` newer than the
 //!   live Parquet is flagged suspect instead of being silently superseded
-//! - **CH-6054** — a frozen store alarms after a no-change streak
+//! - a frozen store alarms after a no-change streak
 //!
 //! All green, and the composite property holds *by construction*. But nothing
 //! exercised the **sequence** (disk fills → mutations attempted → restart), and
@@ -71,7 +71,7 @@ fn set_writable(dir: &std::path::Path, writable: bool) {
     std::fs::set_permissions(dir, perms).expect("chmod");
 }
 
-/// THE acceptance test. Drives the full HZ-6053 arc and asserts the invariant.
+/// THE acceptance test. Drives the full arc and asserts the invariant.
 #[cfg(unix)]
 #[test]
 fn acked_writes_survive_a_restart_even_when_the_disk_fills() {
@@ -177,7 +177,7 @@ fn the_fault_injection_actually_bites() {
 /// still lands in memory before the save is attempted — the client is correctly
 /// told it failed, but the item is then visible to `show`/`list` until the next
 /// restart quietly drops it. Two agents reading the same board would disagree
-/// about whether the work exists, which is how the HZ-6053 divergence stayed
+/// about whether the work exists, which is how the divergence stayed
 /// plausible for so long.
 ///
 /// Admitting BEFORE the handler runs is what closes that: a refused mutation
@@ -219,14 +219,14 @@ fn a_refused_write_never_becomes_readable() {
         after - before
     );
 
-    // CH-6114: the bounded ≤1 window is TRANSIENT, and that is the real contract. The first
+    // the bounded ≤1 window is TRANSIENT, and that is the real contract. The first
     // failure is applied to memory but its persist FAILED, so it never became durable — a
     // restart (reloading the store from disk) drops it. Only ACKED writes survive. Pinning
     // this is what makes the ≤1 tolerance a deliberate, tested guarantee rather than an
     // unexplained slack: the writer is never lied to (told "failed"), and no unacked write
     // outlives the process.
     //
-    // Why honest-error + refuse-thereafter is the accepted permanent answer (CH-6114
+    // Why honest-error + refuse-thereafter is the accepted permanent answer (see
     // investigation): a pre-flight canary cannot reliably close the window — the 64 KiB probe
     // (DEFAULT_PROBE_BYTES) passes on a disk with KiB-but-not-MiB free while the multi-MB
     // parquet snapshot still fails (the common ENOSPC case), so it is a lossy proxy that adds

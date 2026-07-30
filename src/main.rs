@@ -82,7 +82,7 @@ enum Commands {
         template: Option<String>,
         /// Typed relationship, repeatable: --relate <predicate>:<TARGET-ID>
         ///
-        /// e.g. --relate implements:VY-1234 --relate validates:H-5924
+        /// e.g. --relate implements:VY-1234 --relate validates:H-1234
         /// Predicates: related, dependsOn, blocks, parent, implements, spawns,
         /// tests, validates, measures. Domain/range are enforced.
         #[arg(long = "relate", value_name = "PREDICATE:TARGET")]
@@ -94,7 +94,7 @@ enum Commands {
 
     /// Move an item to a new status
     Move {
-        /// Item ID (e.g., EXP-1257)
+        /// Item ID (e.g.)
         id: String,
         /// Target status
         status: String,
@@ -107,12 +107,12 @@ enum Commands {
         /// Resolution reason (completed, superseded, wont_do, duplicate, obsolete, merged, refuted)
         #[arg(long)]
         resolution: Option<String>,
-        /// Provenance URI for closure (e.g., PROP-2025, PR URL)
+        /// Provenance URI for closure (e.g., PROP-1234, PR URL)
         #[arg(long)]
         closed_by: Option<String>,
     },
 
-    /// Ratify a phase (CH-4906): strip `pending-ratification` from every item carrying the phase
+    /// Ratify a phase: strip `pending-ratification` from every item carrying the phase
     /// tag, sprint-start its voyages, and verify none remain — one atomic call (no shell loop).
     Ratify {
         /// The phase tag to ratify (e.g., v19-phase-e)
@@ -122,7 +122,7 @@ enum Commands {
 
     /// Update fields on an existing item
     Update {
-        /// Item ID (e.g., EXP-1274)
+        /// Item ID (e.g.)
         id: String,
         /// New title
         #[arg(long)]
@@ -288,7 +288,7 @@ enum Commands {
         #[arg(long)]
         ready: bool,
         /// Roll up a campaign (CA-XXXX): its member voyages (partOf edges), each voyage's
-        /// %-done, a program aggregate, and a cross-voyage critical path (EX-6250).
+        /// %-done, a program aggregate, and a cross-voyage critical path.
         #[arg(long)]
         campaign: Option<String>,
     },
@@ -311,7 +311,7 @@ enum Commands {
 
     /// Validate SHACL conformance of items against their shape rules
     Validate {
-        /// Item ID to validate (e.g. EX-3212); omit to validate a whole board
+        /// Item ID to validate (e.g. EX-1234); omit to validate a whole board
         id: Option<String>,
         /// Also print suggested fix commands for each violation
         #[arg(long)]
@@ -412,7 +412,7 @@ enum Commands {
 
     /// Materialize a single Arrow item and optionally its related items to arrow-kanban/
     MaterializeItem {
-        /// Item ID to materialize (e.g. VY-3229, EXP-1234)
+        /// Item ID to materialize (e.g. VY-1234)
         id: String,
         /// Scope of related items to materialize: work (dev items), research (HDD items), or all
         #[arg(long, default_value = "all")]
@@ -425,7 +425,7 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// Snapshot the kanban Arrow store to a timestamped backup directory (EX-4010).
+    /// Snapshot the kanban Arrow store to a timestamped backup directory.
     Backup {
         /// List available snapshots and exit (does not create a backup).
         #[arg(long)]
@@ -435,7 +435,7 @@ enum Commands {
         inspect: Option<String>,
     },
 
-    /// Restore the kanban Arrow store from a backup snapshot (EX-4010).
+    /// Restore the kanban Arrow store from a backup snapshot.
     Restore {
         /// Snapshot name to restore (e.g. snapshot-2026-04-07_055839).
         snapshot: String,
@@ -504,7 +504,7 @@ enum HddCommands {
     Registry,
     /// Start a new run of an experiment
     Run {
-        /// Experiment ID (e.g., EXPR-131.1)
+        /// Experiment ID (e.g.)
         experiment_id: String,
         /// Agent running the experiment
         #[arg(long)]
@@ -512,12 +512,12 @@ enum HddCommands {
     },
     /// Show all runs for an experiment
     Status {
-        /// Experiment ID (e.g., EXPR-131.1)
+        /// Experiment ID (e.g.)
         experiment_id: String,
     },
     /// Complete an experiment run with results
     Complete {
-        /// Experiment ID (e.g., EXPR-131.1)
+        /// Experiment ID (e.g.)
         experiment_id: String,
         /// Run number to complete
         #[arg(long)]
@@ -531,7 +531,7 @@ enum HddCommands {
 // ── Backup & Restore Commands ───────────────────────────────────────────────
 use arrow_kanban::backup::{self, BackupConfig};
 
-/// EX-6250: `nk roadmap --campaign CA-XXXX` — the rollup a flat tag can never give. Members are
+/// `arrow-kanban roadmap --campaign CA-XXXX` — the rollup a flat tag can never give. Members are
 /// the voyages with a `partOf` edge to the campaign (data, not a hardcoded list); each member
 /// voyage's `[done/total]` progress comes from the shared engine, summed into a program %-done,
 /// with a cross-voyage critical path over ONLY the member set. Reuses `format_roadmap` — no fork.
@@ -545,11 +545,11 @@ fn render_campaign_roadmap(
     let members = rel_store.incoming_by_predicate(camp_id, "partOf");
 
     let mut items = critical_path::extract_items(&store.query_items(None, None, None, None));
-    // CH-6484: resolve the typed `implements`/`spawns` expedition→voyage edges into `related`
+    // resolve the typed `implements`/`spawns` expedition→voyage edges into `related`
     // so an expedition linked ONLY via `--relate implements:VY-X` counts toward its voyage.
     critical_path::fold_typed_voyage_memberships(&mut items, &rel_store);
     // The rollup rendering is a shared library fn — identical in the server's handle_roadmap, so
-    // `nk roadmap --campaign` renders the same in local and --server mode.
+    // `arrow-kanban roadmap --campaign` renders the same in local and --server mode.
     print!(
         "{}",
         critical_path::format_campaign_roadmap(camp_id, &members, &items)
@@ -557,7 +557,7 @@ fn render_campaign_roadmap(
     Ok(())
 }
 
-/// Run `nk backup` — snapshot or list the kanban Arrow store.
+/// Run `arrow-kanban backup` — snapshot or list the kanban Arrow store.
 fn run_backup_command(
     root: &std::path::Path,
     list: bool,
@@ -610,7 +610,7 @@ fn run_backup_command(
     Ok(())
 }
 
-/// Run `nk restore` — restore the kanban Arrow store from a snapshot.
+/// Run `arrow-kanban restore` — restore the kanban Arrow store from a snapshot.
 fn run_restore_command(
     root: &std::path::Path,
     snapshot: &str,
@@ -947,7 +947,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 None
             };
 
-            // CH-6109: typed relationships at create time. Validate EVERY edge before
+            // typed relationships at create time. Validate EVERY edge before
             // creating anything — a half-related item is worse than a refused one.
             let edges = parse_relate_specs(&relate, it.as_str(), None)?;
 
@@ -1100,7 +1100,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 state_machine::check_wip_limit(board, &status, count, item_type_str)?;
             }
 
-            // Atomic exclusive claim (CH-4905): reject a cross-agent claim on an already
+            // Atomic exclusive claim: reject a cross-agent claim on an already
             // in_progress item (without --force) — same guard as the server's single-writer path.
             if status == "in_progress"
                 && let Some(assignee) = &assign
@@ -1216,7 +1216,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 updated.push("depends_on");
             }
 
-            // CH-6109: typed relationships on EDIT — additive/subtractive, unlike
+            // typed relationships on EDIT — additive/subtractive, unlike
             // --related/--depends-on which replace. Validated before any mutation.
             if !relate.is_empty() || !unrelate.is_empty() {
                 let source_type = arrow_kanban::relation_vocab::type_from_id(&id).unwrap_or("");
@@ -1234,7 +1234,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                     println!("  + {id} -{pred}-> {target}");
                 }
                 for (pred, target) in &del {
-                    // CH-6742 defect 2: remove BOTH projections INDEPENDENTLY. A flat-only
+                    // Remove BOTH projections INDEPENDENTLY. A flat-only
                     // edge (created by --depends-on/--related, no typed edge) makes
                     // remove_relation error — propagating that with `?` used to abort the
                     // whole update, and gating the flat removal behind it left the edge stuck.
@@ -1566,7 +1566,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                         };
                         let below = filters.id_below;
                         (0..batch.num_rows()).any(|i| {
-                            // Extract numeric suffix from ID (e.g., "EX-3100" → 3100)
+                            // Extract numeric suffix from ID (e.g., "EX-1234" → 1234)
                             let id = ids.value(i);
                             id.rsplit('-')
                                 .next()
@@ -1753,7 +1753,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 } else {
                     // Voyage-grouped, dependency-ordered view
                     let mut items = critical_path::extract_items(&all_batches);
-                    // CH-6484: fold the typed `implements`/`spawns` expedition→voyage edges into
+                    // fold the typed `implements`/`spawns` expedition→voyage edges into
                     // `related` so an `implements`-only expedition groups under its voyage.
                     let rel_store = persist::load_relations(&root)?;
                     critical_path::fold_typed_voyage_memberships(&mut items, &rel_store);
@@ -2414,7 +2414,7 @@ fn install_claude_skills(root: &std::path::Path) -> Result<(), Box<dyn std::erro
 fn run_client(server_url: &str, command: &Commands) -> Result<(), Box<dyn std::error::Error>> {
     let client = arrow_kanban::client::NatsClient::connect(server_url)?;
 
-    // CH-6555: a board-wide export (no --id) must PAGINATE — the full ~4577-item reply exceeds the
+    // a board-wide export (no --id) must PAGINATE — the full ~4577-item reply exceeds the
     // NATS max_payload, so a single request never returns (the client deadline elapses). Loop
     // fixed-size pages and reassemble. Single-item export (--id) stays a one-shot request below.
     if let Commands::Export {
@@ -2447,7 +2447,7 @@ fn run_client(server_url: &str, command: &Commands) -> Result<(), Box<dyn std::e
 }
 
 #[cfg(feature = "client")]
-/// CH-6555: reassemble paginated export pages into one document. JSON pages are each a
+/// reassemble paginated export pages into one document. JSON pages are each a
 /// `[...]` item array — parse and concatenate them into one array (a malformed/empty page
 /// contributes nothing). Markdown pages each carry the two header rows (`| ID | … |` +
 /// `|---|…|`); keep them only from the first page and append the row lines from the rest.
@@ -2478,7 +2478,7 @@ fn reassemble_export_pages(format: &str, pages: &[String]) -> String {
     }
 }
 
-/// CH-6555: board-wide export over `--server`, paginated. Requests fixed-size pages
+/// board-wide export over `--server`, paginated. Requests fixed-size pages
 /// (`offset`/`limit`) — each reply staying under the NATS max_payload — until
 /// `offset + count >= total`, then reassembles: JSON pages are parsed and their item arrays
 /// concatenated; markdown pages keep the two header lines only from the first page. Emits to
@@ -2537,7 +2537,7 @@ fn parse_nats_tags(tags: &Option<String>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The flat column a predicate projects onto, if any (CH-6109).
+/// The flat column a predicate projects onto, if any.
 fn flat_col_for(predicate: &str) -> Option<usize> {
     use arrow_kanban::schema::items_col;
     match arrow_kanban::relation_vocab::flat_column_for(predicate) {
@@ -2547,7 +2547,7 @@ fn flat_col_for(predicate: &str) -> Option<usize> {
     }
 }
 
-/// Parse and validate `predicate:TARGET` specs for local mode (CH-6109).
+/// Parse and validate `predicate:TARGET` specs for local mode.
 ///
 /// Mirrors the server-side check so `--relate` behaves IDENTICALLY on both paths — a flag
 /// that works over NATS but is silently ignored locally is worse than no flag.
@@ -2628,7 +2628,7 @@ fn command_to_nats(command: &Commands) -> (String, serde_json::Value) {
                     "assignee": assign,
                     "tags": tag_list,
                     "body": body_content,
-                    // CH-6109: typed relationships at CREATE time.
+                    // typed relationships at CREATE time.
                     "relate": relate,
                 }),
             )
@@ -2871,7 +2871,7 @@ fn command_to_nats(command: &Commands) -> (String, serde_json::Value) {
             unrelate,
         } => {
             let mut payload = serde_json::json!({ "id": id });
-            // CH-6109: typed relationships on EDIT. Additive/subtractive, unlike the
+            // typed relationships on EDIT. Additive/subtractive, unlike the
             // replace-semantics of --related/--depends-on.
             if !relate.is_empty() {
                 payload["relate"] = serde_json::json!(relate);
@@ -2960,7 +2960,7 @@ fn print_client_response(command: &str, response: &serde_json::Value) {
             // (default), `markdown` (--format md), or `json` (--format json). Print
             // whichever is present — previously only `detail` was handled, so under
             // --server both `--format md` and `--format json` silently printed
-            // NOTHING (CH-6645; the FA-E3 time-to-orient measure could not read the
+            // NOTHING (the time-to-orient measure could not read the
             // item as JSON at all).
             if let Some(detail) = response.get("detail").and_then(|v| v.as_str()) {
                 print!("{detail}");
@@ -3233,7 +3233,7 @@ fn find_blocked_items(store: &arrow_kanban::crud::KanbanStore) -> Vec<arrow::arr
                 }
                 // Use BFS to find all transitive dependencies
                 let deps = arrow_kanban::traversal::bfs_with_adjacency(ids.value(i), &adj, 100);
-                // Blocked if any transitive dep is not done. CH-6742 defect 3: skip an
+                // Blocked if any transitive dep is not done. Skip an
                 // empty-string dep — it is not a real dependency, and counting it here while
                 // `--ready` (critical_path) treats `""` as satisfied made the two disagree.
                 deps.iter()
@@ -3370,8 +3370,8 @@ fn build_status_map(
 
 #[cfg(test)]
 mod cli_parse_tests {
-    //! CH-6373: `nk pr comment` accepts positional <TEXT> (mirroring
-    //! `nk comment <ID> <TEXT>`) AND the legacy `--body` flag — exactly one.
+    //! `arrow-kanban pr comment` accepts positional <TEXT> (mirroring
+    //! `arrow-kanban comment <ID> <TEXT>`) AND the legacy `--body` flag — exactly one.
     use super::*;
 
     /// Parse an argv (sans the leading binary name is NOT included — clap wants it).
@@ -3381,7 +3381,7 @@ mod cli_parse_tests {
 
     #[test]
     fn item_comment_positional_unchanged() {
-        // The sibling `nk comment <ID> <TEXT>` that CH-6373 unifies toward is untouched.
+        // The sibling `comment <ID> <TEXT>` surface is untouched.
         let cli = parse(&["comment", "EX-1", "note"]).expect("item comment parses");
         match &cli.command {
             Commands::Comment { id, text } => {
@@ -3397,7 +3397,7 @@ mod cli_parse_tests {
 // server-export path), so its tests are gated the same way.
 #[cfg(all(test, feature = "client"))]
 mod ch6555_reassembly_tests {
-    //! CH-6555: paginated board-export pages must reassemble into one document —
+    //! paginated board-export pages must reassemble into one document —
     //! JSON arrays concatenated, markdown headers de-duplicated to the first page.
     use super::reassemble_export_pages;
 

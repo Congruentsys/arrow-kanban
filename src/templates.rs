@@ -35,7 +35,7 @@ pub struct Shape {
     pub turtle_block: Option<TurtleBlock>,
 }
 
-/// Summary of an item type for `nk templates` listing.
+/// Summary of an item type for `arrow-kanban templates` listing.
 #[derive(Debug, Clone)]
 pub struct TypeSummary {
     pub item_type: ItemType,
@@ -328,7 +328,7 @@ fn extract_number(line: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// Format the `nk templates` listing output.
+/// Format the `arrow-kanban templates` listing output.
 pub fn format_type_listing(summaries: &[TypeSummary]) -> String {
     let mut lines = Vec::new();
     lines.push("Available item types:".to_string());

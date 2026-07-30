@@ -30,7 +30,7 @@ if [ -n "$hits" ]; then
     fail "closed-vocabulary / brand / closed-crate terms found in the open tree (above)."
 fi
 
-# ── (b2) D1 move-inward concept scan (SG-6801 disposition) ───────────────────
+# ── (b2) Move-inward concept scan ────────────────────────────────────────────
 # Fleet-governance concepts that must never re-enter the open engine. The engine
 # treats TAGS as opaque data, so a bare "pending-ratification" tag STRING is fine —
 # what moves inward is the enforcement GATE machinery (its identifiers), the
@@ -57,6 +57,47 @@ if [ -n "$rosterhits" ]; then
     fail "a hardcoded fleet-roster list (two+ agent names comma-separated) is in the open tree (above) — the open engine derives agents from board DATA, never a baked-in roster."
 fi
 
+# ── (b4) Provenance-reference scan (CH-6825) ────────────────────────────────
+# Internal tracker IDs and the upstream CLI alias must not appear in the COMMENTS of
+# the public tree: a reader outside the origin project cannot resolve "CH-6109", so
+# it is noise that leaks process without informing anyone.
+#
+# Scanned on COMMENT LINES ONLY, deliberately. The ID grammar itself is this tool's
+# OWN data model — arrow-kanban items ARE named `EX-1234` — and test fixtures
+# legitimately carry IDs like "EXP-1" on code lines. A gate that flagged those would
+# fire on the product working correctly.
+#
+# Synthetic doc examples stay legal, allowlisted BY NUMBER so docs can still show the
+# format. Allowlisted refs are STRIPPED before the test rather than used to exclude the
+# line: a line carrying BOTH a synthetic example and a real ticket ref must still fail
+# (excluding the whole line would let a real leak ride along on an example — coverage
+# that is not coverage).
+# Four-or-more digits only: the origin tracker allocates from 3001 up, while this
+# repo's test fixtures use one- and two-digit IDs (EX-1, VY-8) in their explanatory
+# comments. Requiring 4+ digits keeps the gate off the product's own tests. A
+# three-digit citation would slip; that is the deliberate trade — a gate that fires
+# on legitimate fixtures gets disabled, which protects nothing.
+PROV_ID='\b(CH|EX|EXP|VY|VOY|SG|PROP|EXPR|HZ|CHORE|PAPER)-[0-9]{4,}(\.[0-9]+)?\b'
+PROV_OK='\b(CH|EX|EXP|VY|VOY|SG|PROP|EXPR|HZ|CHORE|PAPER)-(42|1234|1235|1240)(\.[0-9]+)?\b'
+provhits=$(grep -rnE "$PROV_ID" $SCAN_DIRS 2>/dev/null \
+    | grep -E ':[0-9]+:[[:space:]]*(//|#|\*)' \
+    | grep -vE 'export-gate|red-battery' \
+    | sed -E "s/$PROV_OK//g" \
+    | grep -E "$PROV_ID" || true)
+if [ -n "$provhits" ]; then
+    echo "$provhits" | head -20 >&2
+    fail "internal tracker reference(s) in comments of the open tree (above) — strip the citation and keep the rationale; synthetic doc examples (-42/-1234) are allowed."
+fi
+
+# The upstream shell alias and the upstream contributor guide are project-internal.
+aliashits=$(grep -rnE '(\bCLAUDE\b|\bnk [a-z][a-z-]*\b)' $SCAN_DIRS 2>/dev/null \
+    | grep -E ':[0-9]+:[[:space:]]*(//|#|\*)' \
+    | grep -vE 'export-gate|red-battery' || true)
+if [ -n "$aliashits" ]; then
+    echo "$aliashits" | head -20 >&2
+    fail "upstream alias/guide reference (\`nk <cmd>\` or CLAUDE) in the open tree (above) — the public binary is \`arrow-kanban\`."
+fi
+
 # ── (c) No board-content or research/eval data ───────────────────────────────
 # Persisted board state (Parquet), the runtime data dir, and research/eval
 # corpora are instance data, not the tool — they must never be committed.
@@ -73,7 +114,7 @@ fi
 # A published FOSS crate resolves PURELY from crates.io. A `path = "../…"`
 # dependency or a `nusy-*`/`noesis-*` dep would pull closed monorepo code — and
 # would BUILD FINE on a machine that has the monorepo checked out adjacent, so the
-# clean-clone build alone can't be trusted to catch it (EXPR-6756 finding). Scan
+# clean-clone build alone can't be trusted to catch it. Scan
 # the manifest directly. (`[[bin]] path = "src/main.rs"` is a target path, not a
 # dependency — only parent-relative `path = "../` deps are flagged.)
 # Scan EVERY workspace manifest (root + members), not just the root — a closed dep
