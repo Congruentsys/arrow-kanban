@@ -102,7 +102,7 @@ pub(crate) fn handle_create_typed(
     let edges = parse_and_validate(&req.relate, item_type.as_str(), None)?;
 
     // `related`/`dependsOn` edges ALSO project into the flat columns, so roadmap /
-    // critical-path / worklist / nk show keep reading exactly what they read today. The
+    // critical-path / worklist / arrow-kanban show keep reading exactly what they read today. The
     // flat lists are a projection of the typed edges, written in the same operation —
     // never a second independently-authored source of truth.
     let mut related = req.related;
@@ -212,7 +212,7 @@ pub(crate) fn handle_move_typed(
         .map_err(|e| error_response(&format!("{e}"), "MOVE_FAILED"))?;
 
     // Make the claim STICK — `move --assign` must set the assignee column, not just the
-    // run-provenance agent (previously it didn't, hence the `nk update --assign` follow-up).
+    // run-provenance agent (previously it didn't, hence the `arrow-kanban update --assign` follow-up).
     if let Some(assignee) = req.assignee.as_deref() {
         store
             .update_assignee(&req.id, Some(assignee))
@@ -550,7 +550,7 @@ pub(crate) fn handle_list_typed(
     // Apply the post-filters that previously only existed in the
     // local-mode handler (`Commands::List` in arrow-kanban/src/main.rs:1992).
     // Server-mode requests were silently dropping these fields because they
-    // were not on `ListRequest` at all, so `nk list --tag X` returned the full
+    // were not on `ListRequest` at all, so `arrow-kanban list --tag X` returned the full
     // board regardless of tag.
     if let Some(ref res_filter) = req.resolution {
         items.retain(|batch| {
@@ -882,7 +882,7 @@ pub(crate) fn handle_export_typed(
     let format = req.format.as_deref().unwrap_or("item");
 
     // Single-item export — honor the requested format. Previously this ALWAYS returned
-    // markdown, so `nk export --id X --format json` silently fell back to YAML client-side.
+    // markdown, so `arrow-kanban export --id X --format json` silently fell back to YAML client-side.
     if let Some(id) = &req.id {
         let item = store
             .get_item(id)
@@ -975,7 +975,7 @@ pub(crate) fn handle_roadmap_typed(
     critical_path::fold_typed_voyage_memberships(&mut items, relations);
 
     // Campaign rollup — the SAME shared library renderer the local CLI uses, so
-    // `nk roadmap --campaign` renders identically in local and --server mode.
+    // `arrow-kanban roadmap --campaign` renders identically in local and --server mode.
     if let Some(camp_id) = &req.campaign {
         let members = relations.incoming_by_predicate(camp_id, "partOf");
         let view = critical_path::format_campaign_roadmap(camp_id, &members, &items);
@@ -1682,7 +1682,7 @@ mod claim_tests {
 
 #[cfg(test)]
 mod ch6443_export_request_tests {
-    //! `nk export --format json` (board-wide) sent `id: null`, which the old
+    //! `arrow-kanban export --format json` (board-wide) sent `id: null`, which the old
     //! non-optional `ExportRequest { id: String }` rejected with
     //! "invalid type: null, expected a string". These pin the deserialization fix.
     use super::ExportRequest;
@@ -1789,7 +1789,7 @@ mod ch6555_pagination_tests {
 
 #[cfg(test)]
 mod ch6742_tests {
-    //! `nk update` dependency-edit defects, at the server handler.
+    //! `arrow-kanban update` dependency-edit defects, at the server handler.
     use super::*;
     use arrow_kanban::crud::{CreateItemInput, KanbanStore};
     use arrow_kanban::item_type::ItemType;

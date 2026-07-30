@@ -464,7 +464,7 @@ impl KanbanEngine {
                 &format!(
                     "REFUSED — the kanban store is not accepting durable writes ({reason}). Your \
                      change was NOT applied. Reads still work. Free the underlying problem (usually a \
-                     full disk); the server re-probes and recovers automatically. See HZ-6053."
+                     full disk); the server re-probes and recovers automatically."
                 ),
                 "STORE_DEGRADED",
             );
@@ -498,7 +498,7 @@ impl KanbanEngine {
                                     "'{verb}' was applied in memory but COULD NOT BE PERSISTED ({err}). \
                                      Treat this write as LOST — it will not survive a restart. The server is \
                                      now DEGRADED and further mutations are refused until the store accepts \
-                                     writes again. See HZ-6053."
+                                     writes again."
                                 ),
                                 "STORE_NOT_DURABLE",
                             );
