@@ -19,6 +19,7 @@
 //! and named — which is what keeps the codec property test (over [`ALL_VERBS`])
 //! exhaustive.
 
+use crate::extension::{EngineExtension, ExtCommand};
 use crate::handlers::ErrorResponse;
 use crate::handlers::core::{
     BoardRequest, CommentRequest, CreateRequest, CreateResponse, DeleteRequest, DeleteResponse,
@@ -155,6 +156,12 @@ pub enum KanbanCommand {
     // ── Relations ──
     RelationAdd(RelationAddRequest),
     RelationQuery(RelationQueryRequest),
+    // ── Command extension (E3 3c-i) ──
+    /// A namespaced extension verb (`ext.<namespace>.<verb>`), resolved against
+    /// the engine's registered [`EngineExtension`]. Never produced by [`parse`]
+    /// (which owns the closed CORE verb set) — only by [`KanbanEngine::dispatch`]
+    /// for a verb `parse` did not recognise, so it can never shadow a core verb.
+    Extension(ExtCommand),
     // ── Git stubs (always present) ──
     /// `git.push` / `git.pull` / `git.clone` — carries the full verb.
     GitStubAck(&'static str),
@@ -221,6 +228,9 @@ impl KanbanCommand {
             C::HddRegistry => "hdd.registry",
             C::RelationAdd(_) => "relation.add",
             C::RelationQuery(_) => "relation.query",
+            // The opaque, frozen &'static for every extension verb — the &'static
+            // cannot name the dynamic verb. `verb_display` carries the real name.
+            C::Extension(_) => "ext",
             C::GitStubAck(verb) => verb,
             C::GitStubDetail(verb) => verb,
             #[cfg(feature = "research")]
@@ -240,6 +250,19 @@ impl KanbanCommand {
         }
     }
 
+    /// A human-facing verb label for diagnostics — the frozen [`verb_str`](Self::verb_str)
+    /// for a core command, and the full namespaced verb (e.g. `ext.demo.propose`)
+    /// for an extension command, whose `verb_str` is the opaque `"ext"`. Returns a
+    /// [`Cow`] that never borrows `self`: `Borrowed` wraps the `&'static` core verb,
+    /// `Owned` clones the extension's verb — so a caller can hold it across a move
+    /// of the command (as [`KanbanEngine::apply`] does).
+    pub fn verb_display(&self) -> std::borrow::Cow<'static, str> {
+        match self {
+            KanbanCommand::Extension(e) => std::borrow::Cow::Owned(e.verb.clone()),
+            other => std::borrow::Cow::Borrowed(other.verb_str()),
+        }
+    }
+
     /// Whether this command mutates persisted state. Mirrors the former
     /// `is_mutation` string list EXACTLY (the vestigial `pr.*` entries had no
     /// handler and are simply absent from the command set).
@@ -255,6 +278,9 @@ impl KanbanCommand {
             | C::Delete(_)
             | C::HddCreate(_, _)
             | C::RelationAdd(_) => true,
+            // A property of the REGISTRATION (from `ExtVerbSpec`), not the opaque
+            // `verb_str` — so it travels on the command itself.
+            C::Extension(e) => e.is_mutation,
             #[cfg(feature = "research")]
             C::HddRun(_) | C::HddRunComplete(_) => true,
             C::List(_)
@@ -349,48 +375,74 @@ pub const ALL_VERBS: &[&str] = &[
     "source.delete",
 ];
 
-/// Decode a wire verb + payload into a typed command.
+/// The outcome of decoding a wire verb, before it is resolved against a possible
+/// extension. Splitting `UnknownVerb` out (rather than collapsing straight to the
+/// error reply) is what lets [`KanbanEngine::dispatch`] offer an unknown verb to
+/// the extension while keeping [`parse`] byte-identical for every core verb.
+enum ParseOutcome {
+    /// A recognised core verb, decoded.
+    Cmd(KanbanCommand),
+    /// A recognised core verb whose payload failed to decode — the existing
+    /// `INVALID_PAYLOAD` reply, byte-for-byte.
+    BadPayload(KanbanReply),
+    /// Not a core verb (may still be an extension verb, or genuinely unknown).
+    UnknownVerb,
+}
+
+/// Decode a CORE wire verb + payload, without resolving extensions — the single
+/// source of the core verb→command mapping. [`parse`] and
+/// [`KanbanEngine::dispatch`] both go through it, so the two never drift.
 ///
-/// - A regular verb is `parse_payload::<T>`'d into its variant; a decode error
-///   is the existing `INVALID_PAYLOAD` reply, byte-for-byte (it reuses
-///   `handlers::parse_payload`).
+/// - A regular verb is `parse_payload::<T>`'d into its variant; a decode error is
+///   the existing `INVALID_PAYLOAD` reply, byte-for-byte.
 /// - Lenient / hand-parsed verbs carry the raw payload (their handler parses).
-/// - An unknown verb is the existing `UNKNOWN_COMMAND` reply.
-pub fn parse(verb: &str, payload: &[u8]) -> Result<KanbanCommand, KanbanReply> {
+/// - An unrecognised verb is [`ParseOutcome::UnknownVerb`] — resolved to
+///   `UNKNOWN_COMMAND` by [`parse`], or offered to the extension by `dispatch`.
+fn parse_inner(verb: &str, payload: &[u8]) -> ParseOutcome {
     use KanbanCommand as C;
+    // A required-payload verb: decode, or short-circuit to the byte-identical
+    // INVALID_PAYLOAD reply. The target type is inferred from the variant.
+    macro_rules! req {
+        () => {
+            match parse_req(payload) {
+                Ok(v) => v,
+                Err(reply) => return ParseOutcome::BadPayload(reply),
+            }
+        };
+    }
     let cmd = match verb {
-        "create" => C::Create(parse_req(payload)?),
-        "move" => C::Move(parse_req(payload)?),
-        "ratify" => C::Ratify(parse_req(payload)?),
-        "update" => C::Update(parse_req(payload)?),
-        "comment" => C::Comment(parse_req(payload)?),
-        "rank" => C::Rank(parse_req(payload)?),
-        "list" => C::List(parse_req(payload)?),
-        "show" => C::Show(parse_req(payload)?),
+        "create" => C::Create(req!()),
+        "move" => C::Move(req!()),
+        "ratify" => C::Ratify(req!()),
+        "update" => C::Update(req!()),
+        "comment" => C::Comment(req!()),
+        "rank" => C::Rank(req!()),
+        "list" => C::List(req!()),
+        "show" => C::Show(req!()),
         "query" => C::Query,
-        "board" => C::Board(parse_req(payload)?),
+        "board" => C::Board(req!()),
         "stats" => C::Stats(payload.to_vec()),
-        "delete" => C::Delete(parse_req(payload)?),
+        "delete" => C::Delete(req!()),
         "validate" => C::Validate,
-        "export" => C::Export(parse_req(payload)?),
-        "roadmap" => C::Roadmap(parse_req(payload)?),
+        "export" => C::Export(req!()),
+        "roadmap" => C::Roadmap(req!()),
         "critical-path" => C::CriticalPath,
         "pipeline-health" => C::PipelineHealth,
-        "worklist" => C::Worklist(parse_req(payload)?),
-        "next-id" => C::NextId(parse_req(payload)?),
-        "history" => C::History(parse_req(payload)?),
+        "worklist" => C::Worklist(req!()),
+        "next-id" => C::NextId(req!()),
+        "history" => C::History(req!()),
         "blocked" => C::Blocked,
         "templates" => C::Templates(payload.to_vec()),
-        "hdd.paper" => C::HddCreate(ItemType::Paper, parse_req(payload)?),
-        "hdd.hypothesis" => C::HddCreate(ItemType::Hypothesis, parse_req(payload)?),
-        "hdd.experiment" => C::HddCreate(ItemType::Experiment, parse_req(payload)?),
-        "hdd.measure" => C::HddCreate(ItemType::Measure, parse_req(payload)?),
-        "hdd.idea" => C::HddCreate(ItemType::Idea, parse_req(payload)?),
-        "hdd.literature" => C::HddCreate(ItemType::Literature, parse_req(payload)?),
+        "hdd.paper" => C::HddCreate(ItemType::Paper, req!()),
+        "hdd.hypothesis" => C::HddCreate(ItemType::Hypothesis, req!()),
+        "hdd.experiment" => C::HddCreate(ItemType::Experiment, req!()),
+        "hdd.measure" => C::HddCreate(ItemType::Measure, req!()),
+        "hdd.idea" => C::HddCreate(ItemType::Idea, req!()),
+        "hdd.literature" => C::HddCreate(ItemType::Literature, req!()),
         "hdd.validate" => C::HddValidate,
         "hdd.registry" => C::HddRegistry,
-        "relation.add" => C::RelationAdd(parse_req(payload)?),
-        "relation.query" => C::RelationQuery(parse_req(payload)?),
+        "relation.add" => C::RelationAdd(req!()),
+        "relation.query" => C::RelationQuery(req!()),
         "git.push" => C::GitStubAck("git.push"),
         "git.pull" => C::GitStubAck("git.pull"),
         "git.clone" => C::GitStubAck("git.clone"),
@@ -411,14 +463,27 @@ pub fn parse(verb: &str, payload: &[u8]) -> Result<KanbanCommand, KanbanReply> {
         "source.branches" => C::SourceBranches,
         #[cfg(feature = "git")]
         "source.delete" => C::SourceDelete(payload.to_vec()),
-        other => {
-            return Err(KanbanReply::error(
-                &format!("Unknown command: {other}"),
-                "UNKNOWN_COMMAND",
-            ));
-        }
+        _ => return ParseOutcome::UnknownVerb,
     };
-    Ok(cmd)
+    ParseOutcome::Cmd(cmd)
+}
+
+/// Decode a wire verb + payload into a typed CORE command.
+///
+/// BYTE-IDENTICAL to the former hand-written match (the codec property test calls
+/// this directly): a known verb decodes; a known verb with a bad payload is the
+/// existing `INVALID_PAYLOAD` reply; an unknown verb is the existing
+/// `UNKNOWN_COMMAND` reply. Extension verbs are resolved in
+/// [`KanbanEngine::dispatch`], never here, so `parse`'s contract is unchanged.
+pub fn parse(verb: &str, payload: &[u8]) -> Result<KanbanCommand, KanbanReply> {
+    match parse_inner(verb, payload) {
+        ParseOutcome::Cmd(cmd) => Ok(cmd),
+        ParseOutcome::BadPayload(reply) => Err(reply),
+        ParseOutcome::UnknownVerb => Err(KanbanReply::error(
+            &format!("Unknown command: {verb}"),
+            "UNKNOWN_COMMAND",
+        )),
+    }
 }
 
 /// `parse_payload` with its error mapped back into a typed reply (byte-identical
@@ -448,6 +513,10 @@ pub struct KanbanEngine<B: StorageBackend = ParquetBackend, L: WriterLease = Loc
     /// newer writer has taken the lease (a higher current epoch); the epoch it
     /// holds is stamped on every commit.
     pub lease: L,
+    /// An optional command extension (E3 3c-i): a namespaced verb family with its
+    /// own in-memory tables, routed through the SAME commit boundary as core.
+    /// `None` is the open engine — zero extension verbs, zero extension events.
+    pub extension: Option<Box<dyn EngineExtension + Send>>,
 }
 
 impl KanbanEngine<ParquetBackend, LocalWriterLease> {
@@ -467,6 +536,22 @@ impl KanbanEngine<ParquetBackend, LocalWriterLease> {
             ParquetBackend::open(&PathBuf::from(".")).expect("default backend")
         });
         Self::with_backend(store, relations, data_dir, health, backend)
+    }
+
+    /// Construct the default-backend engine WITH a command extension installed —
+    /// the engine that offers the extension's namespaced verbs alongside the core
+    /// set. Equivalent to [`new`](Self::new) followed by setting the public
+    /// `extension` field; provided so a deployment wires its extension in one call.
+    pub fn with_extension(
+        store: KanbanStore,
+        relations: RelationsStore,
+        data_dir: PathBuf,
+        health: HealthGate,
+        extension: Box<dyn EngineExtension + Send>,
+    ) -> Self {
+        let mut engine = Self::new(store, relations, data_dir, health);
+        engine.extension = Some(extension);
+        engine
     }
 }
 
@@ -509,6 +594,10 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
             health,
             backend,
             lease,
+            // The open engine: no extension until one is installed (`with_extension`
+            // or by setting the public field). Every existing construction site
+            // defaults through here, so none is disturbed.
+            extension: None,
         }
     }
 
@@ -524,20 +613,50 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
     }
 
     /// Decode → apply → encode. Strips the `kanban.cmd.` subject prefix first.
+    ///
+    /// A verb the CORE `parse` does not recognise is offered to the registered
+    /// extension (if any) — never before, so an extension can never intercept a
+    /// core verb.
     pub fn dispatch(&mut self, subject: &str, payload: &[u8]) -> Vec<u8> {
         let verb = subject.strip_prefix("kanban.cmd.").unwrap_or(subject);
-        match parse(verb, payload) {
-            Ok(cmd) => self.apply(cmd),
-            Err(reply) => reply,
+        let reply = match parse_inner(verb, payload) {
+            ParseOutcome::Cmd(cmd) => self.apply(cmd),
+            ParseOutcome::BadPayload(reply) => reply,
+            ParseOutcome::UnknownVerb => self.dispatch_unknown(verb, payload),
+        };
+        reply.into_bytes()
+    }
+
+    /// Resolve a verb the core did not recognise against the registered extension.
+    /// The extension classifies it (declaring its namespace + mutation flag), and
+    /// the engine routes it as a [`KanbanCommand::Extension`] through the SAME
+    /// [`apply`](Self::apply) — commit boundary, health gate, and lease fence all
+    /// included. An unclassified verb, or no extension at all, is the same
+    /// `UNKNOWN_COMMAND` reply the core always produced (so a bare `demo.x` with no
+    /// extension, or a registered extension's un-owned `ext.demo.bogus`, both fall
+    /// through here unchanged).
+    fn dispatch_unknown(&mut self, verb: &str, payload: &[u8]) -> KanbanReply {
+        match self.extension.as_ref().and_then(|x| x.classify(verb)) {
+            Some(spec) => self.apply(KanbanCommand::Extension(ExtCommand {
+                namespace: spec.namespace,
+                verb: verb.to_string(),
+                payload: payload.to_vec(),
+                is_mutation: spec.is_mutation,
+            })),
+            None => KanbanReply::error(&format!("Unknown command: {verb}"), "UNKNOWN_COMMAND"),
         }
-        .into_bytes()
     }
 
     /// Apply a decoded command, replicating the former `dispatch` flow:
     /// (a) admit the mutation before it touches memory; (b) run the logic;
     /// (c) persist-or-degrade after a successful mutation.
     pub fn apply(&mut self, cmd: KanbanCommand) -> KanbanReply {
-        let verb = cmd.verb_str();
+        // `verb_display` (not `verb_str`) so an extension command's diagnostics
+        // name the real verb (`ext.demo.propose`), not the opaque `"ext"`. The Cow
+        // borrows nothing from `cmd` (Borrowed wraps the &'static core verb), so it
+        // stays valid across the `route(cmd)` move below; for a core command it is
+        // byte-identical to the former &'static verb.
+        let verb = cmd.verb_display();
         let is_mut = cmd.is_mutation();
 
         // (a) Admit mutations BEFORE they touch memory. Once the store
@@ -613,9 +732,17 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
                     // `mutation_event`); a None here is an internal inconsistency,
                     // handled fail-closed as a durability failure rather than a
                     // silent unpersisted write (the exact incident shape).
-                    let event = event_cmd
-                        .as_ref()
-                        .and_then(|c| crate::events::mutation_event(c, &reply));
+                    // An extension mutation derives its event through the
+                    // extension itself; every core mutation through the exhaustive
+                    // core derivation. Both feed the SAME commit below.
+                    let event = match event_cmd.as_ref() {
+                        Some(KanbanCommand::Extension(ext)) => self
+                            .extension
+                            .as_ref()
+                            .and_then(|x| x.derive_event(ext, &reply)),
+                        Some(c) => crate::events::mutation_event(c, &reply),
+                        None => None,
+                    };
                     let commit = match &event {
                         Some(ev) => self
                             .backend
@@ -629,7 +756,7 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
                     match commit {
                         Ok(_seq) => self.health.record_persist_success(),
                         Err(err) => {
-                            self.health.record_persist_failure(verb, &err);
+                            self.health.record_persist_failure(&verb, &err);
                             return KanbanReply::error(
                                 &format!(
                                     "'{verb}' was applied in memory but COULD NOT BE COMMITTED ({err}). \
@@ -694,6 +821,21 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
             C::HddRegistry => core::handle_hdd_registry_typed(&self.store, &self.relations),
             C::RelationAdd(req) => relations::handle_relation_add_typed(req, &mut self.relations),
             C::RelationQuery(req) => relations::handle_relation_query_typed(req, &self.relations),
+            C::Extension(ext) => match self.extension.as_mut() {
+                // Run the extension's own apply. Its typed error reply is mapped
+                // into the engine's byte-carrying error channel; `apply`
+                // reconstructs it verbatim via `from_error_bytes`.
+                Some(x) => x
+                    .apply(&ext.verb, &ext.payload)
+                    .map_err(KanbanReply::into_bytes),
+                // Unreachable in practice: `Extension` is only ever constructed
+                // after `classify` claimed the verb, so the extension is present.
+                // Handled fail-safe as UNKNOWN_COMMAND rather than a panic.
+                None => Ok(KanbanReply::error(
+                    &format!("Unknown command: {}", ext.verb),
+                    "UNKNOWN_COMMAND",
+                )),
+            },
             C::GitStubAck(verb) => Ok(KanbanReply::Value(serde_json::json!({
                 "message": format!(
                     "git.{} acknowledged. Graph git stores are currently per-agent \

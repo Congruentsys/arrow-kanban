@@ -135,6 +135,10 @@ mutate_expect_red "closed vocab -> storage.rs (new commit-boundary src)"   serve
 mutate_expect_red "closed crate ref -> storage.rs (new commit-boundary src)" server/src/storage.rs                      $'\n// pulls nusy-graph-review internals\n'
 mutate_expect_red "closed vocab -> the new outbox battery (server/tests)"   server/tests/outbox_atomicity_acceptance.rs  $'\n// yurtle certifiability_class\n'
 
+# E3 3c-i — the command-extension trait is a NEW src file; prove the gate scans it
+# too (a closed-crate/NuSy ref into extension.rs must go RED, not ride in un-scanned).
+mutate_expect_red "closed-crate/NuSy ref -> extension.rs (new command-extension src)" server/src/extension.rs $'\n// pulls nusy-graph-review internals\n'
+
 # final: tree restored + gate green again.
 "${GATE[@]}" >/dev/null 2>&1 || fail "gate is not green after restore — a mutation leaked."
 echo "✅ [red-battery] all $INJECTIONS injections RED; clean tree green; positive controls hold."

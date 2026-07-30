@@ -24,6 +24,11 @@ use futures::StreamExt;
 const CMD_SUBJECT_PREFIX: &str = "kanban.cmd";
 /// Mutation events are published to `{EVENT_SUBJECT_PREFIX}.{event_type}`.
 const EVENT_SUBJECT_PREFIX: &str = "kanban.event";
+/// Extension events (E3 3c-i) are published to a SEPARATE subject tree,
+/// `{EXT_EVENT_SUBJECT_PREFIX}.{namespace}.{kind}` — deliberately NOT under
+/// `kanban.event.>`, so the frozen `KANBAN_EVENTS` stream and its v1.0 consumers
+/// never receive an extension event.
+const EXT_EVENT_SUBJECT_PREFIX: &str = "kanban.ext.event";
 /// Durable JetStream stream that captures mutation events.
 const EVENT_STREAM_NAME: &str = "KANBAN_EVENTS";
 /// Subject filter the stream captures (matches every `kanban.event.*`).
@@ -231,11 +236,19 @@ async fn drain_outbox(
         }
     };
     for committed in events {
-        let suffix = committed.event.subject_suffix();
-        let full_subject = format!("{EVENT_SUBJECT_PREFIX}.{suffix}");
+        // Core events stay on `kanban.event.<suffix>` (byte-identical to before);
+        // extension events go on the SEPARATE `kanban.ext.event.<ns>.<kind>` tree,
+        // so the frozen `kanban.event.>` stream never captures them.
+        let full_subject = committed
+            .event
+            .published_subject(EVENT_SUBJECT_PREFIX, EXT_EVENT_SUBJECT_PREFIX);
         let payload = committed.event.outbox_payload();
+        // The envelope's `event_type` is the event's logical subject — the frozen
+        // suffix for a core event (byte-identical to the former `suffix`), and
+        // `ext.<ns>.<kind>` for an extension event.
+        let event_type = committed.event.event_subject();
         let envelope = event_envelope_versioned(
-            suffix,
+            &event_type,
             &payload,
             committed.event.contract_version(),
             committed.seq,

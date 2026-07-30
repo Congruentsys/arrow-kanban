@@ -148,6 +148,9 @@ use crate::engine::{KanbanCommand, KanbanReply};
 pub const CONTRACT_V1_0: &str = "1.0";
 /// The additive contract version for the events completed by E3 PR-2.
 pub const CONTRACT_V1_1: &str = "1.1";
+/// The contract version stamped on extension events (E3 3c-i) — a distinct family
+/// from the core v1.x line, so an extension's event schema versions independently.
+pub const CONTRACT_EXT_1: &str = "ext.1";
 
 /// A typed, committed mutation event. Carries enough to (a) project the outbox
 /// notification and (b) replay the write onto a checkpoint during recovery.
@@ -166,6 +169,17 @@ pub enum MutationEvent {
     RunStarted(RunEvent),
     #[cfg(feature = "research")]
     RunCompleted(RunEvent),
+    /// An extension-derived event (E3 3c-i). Internally-tagged like its siblings
+    /// (`"kind":"Extension"`); the extension's OWN event name travels in the
+    /// `ext_kind` field — renamed off the serde tag key `kind` so the tag and the
+    /// field never collide. Adding this variant leaves every existing variant's
+    /// bytes untouched (the legacy-projection + log round-trip tests stay green).
+    Extension {
+        namespace: String,
+        #[serde(rename = "ext_kind")]
+        kind: String,
+        payload: serde_json::Value,
+    },
 }
 
 /// Replay-complete record of a create (either `create` or an `hdd.*` create).
@@ -431,6 +445,11 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
             status: ostr(&rv, "status").unwrap_or_else(|| "complete".to_string()),
         })),
 
+        // An extension command derives its event through the extension itself
+        // (`EngineExtension::derive_event`), never through the core derivation —
+        // so the core mutation_event returns None and the engine routes around it.
+        C::Extension(_) => None,
+
         // ── Non-mutating commands emit no event (wildcard-free by design). ──
         C::List(_)
         | C::Show(_)
@@ -475,17 +494,56 @@ impl MutationEvent {
             MutationEvent::RunStarted(_) => "run_started",
             #[cfg(feature = "research")]
             MutationEvent::RunCompleted(_) => "run_completed",
+            // Frozen &'static, unused for extension events — the routing subject
+            // is `event_subject()` / `published_subject()` (they carry namespace+kind).
+            MutationEvent::Extension { .. } => "ext",
         }
     }
 
     /// The event-contract version: the three legacy events stay frozen at v1.0;
-    /// everything the outbox added ships v1.1.
+    /// the outbox-completed events ship v1.1; extension events ship the `ext.1`
+    /// family (distinct, so an extension versions its schema independently).
     pub fn contract_version(&self) -> &'static str {
         match self {
             MutationEvent::Created(_) | MutationEvent::Moved(_) | MutationEvent::Deleted(_) => {
                 CONTRACT_V1_0
             }
+            MutationEvent::Extension { .. } => CONTRACT_EXT_1,
             _ => CONTRACT_V1_1,
+        }
+    }
+
+    /// True for an extension-derived event — published on the SEPARATE
+    /// `kanban.ext.event.>` subject tree, never on the frozen `kanban.event.>`.
+    pub fn is_extension(&self) -> bool {
+        matches!(self, MutationEvent::Extension { .. })
+    }
+
+    /// The projected logical subject of this event. A core event keeps its frozen
+    /// [`subject_suffix`](Self::subject_suffix) (e.g. `created`); an extension
+    /// event projects to `ext.<namespace>.<kind>` (e.g. `ext.demo.propose`).
+    pub fn event_subject(&self) -> String {
+        match self {
+            MutationEvent::Extension {
+                namespace, kind, ..
+            } => format!("ext.{namespace}.{kind}"),
+            other => other.subject_suffix().to_string(),
+        }
+    }
+
+    /// The FULL NATS subject the outbox publishes this event to, given the core
+    /// event prefix (`kanban.event`) and the extension event prefix
+    /// (`kanban.ext.event`). A core event stays on `<core_prefix>.<suffix>` —
+    /// BYTE-IDENTICAL to the former construction — so the frozen `KANBAN_EVENTS`
+    /// stream (which filters `kanban.event.>`) is unchanged. An extension event
+    /// goes on `<ext_prefix>.<namespace>.<kind>`, a distinct tree the frozen
+    /// stream never captures.
+    pub fn published_subject(&self, core_prefix: &str, ext_prefix: &str) -> String {
+        match self {
+            MutationEvent::Extension {
+                namespace, kind, ..
+            } => format!("{ext_prefix}.{namespace}.{kind}"),
+            other => format!("{core_prefix}.{}", other.subject_suffix()),
         }
     }
 
@@ -538,6 +596,8 @@ impl MutationEvent {
             MutationEvent::RunCompleted(e) => serde_json::json!({
                 "experiment_id": e.experiment_id, "run": e.run, "status": e.status,
             }),
+            // The extension's own reply is the notification payload, verbatim.
+            MutationEvent::Extension { payload, .. } => payload.clone(),
         }
     }
 
@@ -707,6 +767,11 @@ impl MutationEvent {
             // checkpoint, so there is no item-store state to replay.
             #[cfg(feature = "research")]
             MutationEvent::RunStarted(_) | MutationEvent::RunCompleted(_) => Ok(()),
+            // An extension event carries no CORE-store state — the core replay is
+            // a no-op. The ENGINE will replay it onto the extension's own tables
+            // (via `EngineExtension::replay`); that load-orchestration is 3c-ii, so
+            // in 3c-i an ext event is durable-in-log but not yet restored on load.
+            MutationEvent::Extension { .. } => Ok(()),
         }
     }
 }
