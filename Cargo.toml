@@ -1,6 +1,6 @@
 [package]
 name = "arrow-kanban"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "Arrow-native, graph-native kanban engine — SHACL shapes, dual boards, typed relationships, optional NATS multi-agent collaboration."
@@ -35,3 +35,7 @@ client = ["dep:async-nats", "dep:tokio"]
 
 [dev-dependencies]
 tempfile = "3"
+
+[workspace]
+members = ["server"]
+resolver = "2"
