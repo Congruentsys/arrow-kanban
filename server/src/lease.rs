@@ -51,9 +51,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// exceeds `e`. `0` means "no writer has ever taken the lease".
 pub type Epoch = u64;
 
-/// The owner-metadata file for the local lease (kept in the store directory
-/// alongside the other `_`-prefixed runtime files). Its content is the current
-/// [`WriterOwner`] record — identity plus the epoch that owner holds.
+/// The owner-metadata file name for the local lease, written in the directory the
+/// lease is given (the engine passes the data ROOT — the always-present
+/// `--data-dir` — so the lease never forces early creation of the lazily-created
+/// `.arrow-kanban` store dir). Its content is the current [`WriterOwner`] record —
+/// identity plus the epoch that owner holds.
 pub const OWNER_FILE: &str = "_writer.owner";
 
 /// Errors reading the lease authority. Small and message-carrying so any
@@ -150,7 +152,7 @@ pub enum Acquisition {
 /// The shipped default lease: single-host, pure-`std`, owner-metadata + monotonic
 /// epoch + crash recovery.
 ///
-/// One record ([`OWNER_FILE`]) in the store directory holds the current owner and
+/// One record ([`OWNER_FILE`]) in the lease directory holds the current owner and
 /// its epoch. [`acquire`](Self::acquire) reads it, mints `prior + 1`, and writes
 /// itself as the new owner — bumping (and thereby fencing any incumbent). A dead
 /// owner is reclaimed cleanly; a live owner is taken over *loudly* (never

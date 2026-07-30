@@ -32,6 +32,7 @@
 //! owning task cannot deadlock.
 
 use crate::engine::{KanbanEngine, KanbanReply};
+use crate::lease::WriterLease;
 use crate::snapshot::AggregateSnapshot;
 use crate::storage::{Seq, StorageBackend};
 use std::sync::{Arc, RwLock};
@@ -72,13 +73,14 @@ const COMMAND_CHANNEL_DEPTH: usize = 1024;
 ///
 /// Generic over the backend so tests can drive the actor over a fault-injecting
 /// [`StorageBackend`]; the server spawns it over the default `ParquetBackend`.
-pub fn spawn<B, F>(
-    mut engine: KanbanEngine<B>,
+pub fn spawn<B, L, F>(
+    mut engine: KanbanEngine<B, L>,
     on_shutdown: F,
 ) -> (KanbanHandle, tokio::task::JoinHandle<()>)
 where
     B: StorageBackend + Send + 'static,
-    F: FnOnce(KanbanEngine<B>) + Send + 'static,
+    L: WriterLease + Send + 'static,
+    F: FnOnce(KanbanEngine<B, L>) + Send + 'static,
 {
     // Seed the snapshot from the loaded state at its committed high-water.
     let initial = Arc::new(AggregateSnapshot::new(

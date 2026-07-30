@@ -32,6 +32,7 @@
 //! and [`ParquetBackend`] is the default. PR-2 ships only these two.
 
 use crate::events::MutationEvent;
+use crate::lease::Epoch;
 use arrow_kanban::crud::KanbanStore;
 use arrow_kanban::relations::RelationsStore;
 use std::fs;
@@ -102,6 +103,10 @@ impl std::error::Error for StoreError {
 pub struct CommittedEvent {
     /// The commit-log position assigned at commit time.
     pub seq: Seq,
+    /// The writer-lease epoch (fencing token) the committing writer held. Records
+    /// which writer generation produced this event — a replica reads it to detect
+    /// a split brain (two generations interleaved). `0` for a pre-epoch log line.
+    pub epoch: Epoch,
     /// The typed mutation event.
     pub event: MutationEvent,
 }
@@ -121,13 +126,16 @@ pub struct LoadedState {
 /// fsync barrier — no queue, no actor (that is later PR work).
 pub trait StorageBackend {
     /// THE fsync commit barrier. Append+fsync the sequenced event (the commit
-    /// point), then checkpoint `store`/`relations` as a derived snapshot, and
-    /// return the assigned monotonic seq. On failure **nothing is committed**,
-    /// the seq is unchanged, and no event becomes visible to [`events_since`].
+    /// point) STAMPED with the committing writer's lease `epoch`, then checkpoint
+    /// `store`/`relations` as a derived snapshot, and return the assigned monotonic
+    /// seq. On failure **nothing is committed**, the seq is unchanged, and no event
+    /// becomes visible to [`events_since`]. The caller (the engine) fences a stale
+    /// writer BEFORE calling this, so a fenced mutation never reaches the barrier.
     fn commit(
         &mut self,
         store: &KanbanStore,
         relations: &RelationsStore,
+        epoch: Epoch,
         event: &MutationEvent,
     ) -> Result<Seq, StoreError>;
 
@@ -145,10 +153,19 @@ pub trait StorageBackend {
     fn committed_seq(&self) -> Seq;
 }
 
-/// One serialized commit-log line: the seq and its event.
+/// One serialized commit-log line: the seq, the committing writer's lease epoch,
+/// and its event.
+///
+/// `epoch` is `#[serde(default)]` so a log written before this field existed (a
+/// PR-2/3a `{seq, event}` line) still deserializes — the epoch reads back as `0`.
+/// It is the LAST-added serialized field placed mid-struct deliberately: the
+/// default makes its absence backward-compatible, and no code keys off byte order
+/// of the log (it is line-delimited JSON, not a fixed layout).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct LogLine {
     seq: Seq,
+    #[serde(default)]
+    epoch: Epoch,
     event: MutationEvent,
 }
 
@@ -328,6 +345,7 @@ impl StorageBackend for ParquetBackend {
         &mut self,
         store: &KanbanStore,
         relations: &RelationsStore,
+        epoch: Epoch,
         event: &MutationEvent,
     ) -> Result<Seq, StoreError> {
         let dir = Self::store_dir_path(&self.root);
@@ -335,11 +353,13 @@ impl StorageBackend for ParquetBackend {
         let rollback_to = Self::log_len(&dir);
 
         // (1) THE BARRIER: append + fsync the sequenced event (and fsync the
-        // directory). A crash AFTER this returns but before the checkpoint lands
-        // leaves the event in the log with no checkpoint — recovered by replay on
-        // load (a torn checkpoint is not a lost write).
+        // directory), STAMPED with the committing writer's lease epoch. A crash
+        // AFTER this returns but before the checkpoint lands leaves the event in
+        // the log with no checkpoint — recovered by replay on load (a torn
+        // checkpoint is not a lost write).
         let line = serde_json::to_string(&LogLine {
             seq,
+            epoch,
             event: event.clone(),
         })
         .map_err(|e| StoreError::Decode(e.to_string()))?;
@@ -435,6 +455,7 @@ impl ParquetBackend {
             if rec.seq > after {
                 out.push(CommittedEvent {
                     seq: rec.seq,
+                    epoch: rec.epoch,
                     event: rec.event,
                 });
             }
