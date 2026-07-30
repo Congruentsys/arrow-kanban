@@ -42,11 +42,29 @@ use std::path::{Path, PathBuf};
 /// `0` means "nothing committed yet".
 pub type Seq = u64;
 
+/// The on-disk table-contract version stamped into the checkpoint manifest (and
+/// bound into every [`AggregateSnapshot`](crate::snapshot::AggregateSnapshot)).
+/// Bump only when the persisted table schemas change incompatibly.
+pub const SCHEMA_VERSION: u32 = 1;
+
 /// The append-only event log — the single fsync commit point.
 const EVENT_LOG_FILE: &str = "_events.log";
 /// The high-water seq the state checkpoint reflects (leading `_` keeps it out of
 /// the data-table namespace, like `_commits.json`).
+///
+/// LEGACY (PR-2): a bare seq marker written AFTER the parquet. It could trail the
+/// parquet across a crash, replaying an already-checkpointed event → a
+/// double-apply of the non-idempotent kinds (comment / relation.add). Superseded
+/// by [`CHECKPOINT_MANIFEST_FILE`]; still READ as a fallback so a store written by
+/// the old backend upgrades cleanly (marker seq is trusted when no manifest exists).
 const CHECKPOINT_SEQ_FILE: &str = "_checkpoint.seq";
+/// The checkpoint manifest — the single authoritative record of what the derived
+/// parquet checkpoint covers: `{seq, schema_version, files}`. Written via
+/// tmp+rename as the FINAL step of a commit, so a crash before the rename leaves
+/// the PREVIOUS complete manifest in place and the whole uncovered tail is
+/// replayed from there. On load, the manifest's seq is the checkpoint high-water:
+/// replay is strictly AFTER it, so a checkpointed event is never replayed.
+const CHECKPOINT_MANIFEST_FILE: &str = "_checkpoint.manifest";
 
 /// Errors from the storage backend. (Hand-rolled `Display`/`Error` — the server
 /// crate deliberately carries no `thiserror` dependency.)
@@ -134,6 +152,22 @@ struct LogLine {
     event: MutationEvent,
 }
 
+/// The checkpoint manifest — one atomic record binding the derived parquet
+/// checkpoint to the seq it reflects, the table-contract version, and the file
+/// set it covers. Written tmp+rename as the final commit step; its `seq` is the
+/// authoritative checkpoint high-water on load.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CheckpointManifest {
+    seq: Seq,
+    schema_version: u32,
+    /// The data tables this checkpoint covers (the `save_all` file set). Recorded
+    /// for auditability / future validation; the load path keys off `seq`.
+    files: Vec<String>,
+}
+
+/// The parquet file set a checkpoint covers — the tables `save_all` persists.
+const CHECKPOINT_FILES: &[&str] = &["items", "runs", "item_comments", "relations"];
+
 /// The default backend: append-only event log + derived Parquet checkpoint.
 pub struct ParquetBackend {
     /// The `--data-dir` root (the store lives at `<root>/.arrow-kanban`).
@@ -195,9 +229,23 @@ impl ParquetBackend {
         Ok(out)
     }
 
-    /// Read the checkpoint seq marker (0 if absent/unparseable — a pre-backend
-    /// checkpoint has no marker and is treated as reflecting nothing past 0).
-    fn read_checkpoint_seq(dir: &Path) -> Seq {
+    /// The authoritative checkpoint high-water: the seq the derived parquet
+    /// checkpoint reflects. Replay on load is strictly AFTER this.
+    ///
+    /// Resolution order, so both current and upgrading stores load correctly:
+    /// 1. the [`CheckpointManifest`]'s `seq` (the current, authoritative record);
+    /// 2. else the legacy [`CHECKPOINT_SEQ_FILE`] marker — a store written by the
+    ///    PR-2 backend has a marker but no manifest, and trusting its recorded seq
+    ///    is what stops the upgrade load from replaying the whole (already
+    ///    checkpointed) tail;
+    /// 3. else `0` — a pre-backend store (no manifest, no marker) has no log, so
+    ///    "checkpoint reflects nothing past 0" plus "no committed tail" = no replay.
+    fn read_checkpoint_high_water(dir: &Path) -> Seq {
+        if let Ok(s) = fs::read_to_string(dir.join(CHECKPOINT_MANIFEST_FILE))
+            && let Ok(m) = serde_json::from_str::<CheckpointManifest>(&s)
+        {
+            return m.seq;
+        }
         fs::read_to_string(dir.join(CHECKPOINT_SEQ_FILE))
             .ok()
             .and_then(|s| s.trim().parse::<Seq>().ok())
@@ -230,11 +278,23 @@ impl ParquetBackend {
         Ok(())
     }
 
-    /// Best-effort atomic write of the checkpoint seq marker.
-    fn write_checkpoint_seq(dir: &Path, seq: Seq) -> std::io::Result<()> {
-        let path = dir.join(CHECKPOINT_SEQ_FILE);
-        let tmp = dir.join(format!("{CHECKPOINT_SEQ_FILE}.tmp"));
-        fs::write(&tmp, seq.to_string())?;
+    /// Atomically write the checkpoint manifest via tmp+rename — the FINAL step of
+    /// a commit. The rename is what publishes "the parquet now reflects `seq`":
+    /// a crash before it leaves the previous complete manifest in place, so the
+    /// uncovered tail is replayed from there (a checkpointed event is never
+    /// replayed). Best-effort at the call site (a failure only leaves the manifest
+    /// trailing, which the idempotent replay tolerates).
+    fn write_checkpoint_manifest(dir: &Path, seq: Seq) -> std::io::Result<()> {
+        let manifest = CheckpointManifest {
+            seq,
+            schema_version: SCHEMA_VERSION,
+            files: CHECKPOINT_FILES.iter().map(|s| s.to_string()).collect(),
+        };
+        let bytes = serde_json::to_vec(&manifest)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let path = dir.join(CHECKPOINT_MANIFEST_FILE);
+        let tmp = dir.join(format!("{CHECKPOINT_MANIFEST_FILE}.tmp"));
+        fs::write(&tmp, &bytes)?;
         fs::rename(&tmp, &path)?;
         Ok(())
     }
@@ -303,14 +363,16 @@ impl StorageBackend for ParquetBackend {
             return Err(StoreError::Checkpoint(e.to_string()));
         }
 
-        // Both landed — advance the committed high-water. The checkpoint marker
-        // is written AFTER the parquet (never ahead of it, so it never
-        // over-claims); a crash between them replays the last event idempotently.
+        // Both landed — advance the committed high-water. The manifest is the
+        // FINAL step (written after the parquet, so it never over-claims): its
+        // rename publishes "the parquet reflects `seq`". A crash before the rename
+        // leaves the previous complete manifest, and the uncovered tail (including
+        // this event) is replayed idempotently on load — no double-apply.
         self.committed_seq = seq;
-        if let Err(e) = Self::write_checkpoint_seq(&dir, seq) {
+        if let Err(e) = Self::write_checkpoint_manifest(&dir, seq) {
             eprintln!(
-                "kanban: checkpoint-seq marker update after commit seq={seq} failed ({e}); the \
-                 last event will be replayed idempotently on load."
+                "kanban: checkpoint-manifest update after commit seq={seq} failed ({e}); the \
+                 uncovered tail will be replayed idempotently on load."
             );
         }
 
@@ -324,14 +386,15 @@ impl StorageBackend for ParquetBackend {
             .map_err(|e| StoreError::Checkpoint(e.to_string()))?;
 
         let dir = Self::store_dir_path(&self.root);
-        let checkpoint_seq = Self::read_checkpoint_seq(&dir);
+        let checkpoint_seq = Self::read_checkpoint_high_water(&dir);
         let committed_seq = Self::scan_high_water(&self.root)?;
         self.committed_seq = committed_seq;
 
         // Replay the committed tail the checkpoint does not yet reflect. In steady
-        // state the checkpoint is written every commit, so this is empty; it is
-        // non-empty only after a torn checkpoint, and rebuilding it here is what
-        // makes a torn checkpoint a recovered write rather than a lost one.
+        // state the manifest is written every commit, so this is empty; it is
+        // non-empty only after a torn/trailing checkpoint, and rebuilding it here
+        // is what makes that a recovered write rather than a lost or doubled one
+        // (the replay of each event kind is idempotent — see `replay_into`).
         if committed_seq > checkpoint_seq {
             for committed in self.events_since(checkpoint_seq)? {
                 committed
@@ -345,7 +408,22 @@ impl StorageBackend for ParquetBackend {
     }
 
     fn events_since(&self, after: Seq) -> Result<Vec<CommittedEvent>, StoreError> {
-        let dir = Self::store_dir_path(&self.root);
+        Self::read_events_since(&self.root, after)
+    }
+
+    fn committed_seq(&self) -> Seq {
+        self.committed_seq
+    }
+}
+
+impl ParquetBackend {
+    /// Path-read the committed events with `seq > after`, in seq order — WITHOUT a
+    /// live backend instance. The append-only log is the sole input, so this is a
+    /// pure read of durable state: the outbox drain calls it directly (never
+    /// through the engine-owning actor task), so re-publishing the committed tail
+    /// never contends with the write path.
+    pub fn read_events_since(root: &Path, after: Seq) -> Result<Vec<CommittedEvent>, StoreError> {
+        let dir = Self::store_dir_path(root);
         let path = dir.join(EVENT_LOG_FILE);
         if !path.exists() {
             return Ok(Vec::new());
@@ -365,7 +443,9 @@ impl StorageBackend for ParquetBackend {
         Ok(out)
     }
 
-    fn committed_seq(&self) -> Seq {
-        self.committed_seq
+    /// Path-read the committed high-water (the log's max seq) WITHOUT a live
+    /// backend — the pure-read companion to [`read_events_since`](Self::read_events_since).
+    pub fn read_committed_seq(root: &Path) -> Result<Seq, StoreError> {
+        Self::scan_high_water(root)
     }
 }

@@ -656,7 +656,12 @@ impl MutationEvent {
                     let _ = store.update_depends_on(&e.id, d);
                 }
                 for (pred, target) in parse_relationship_specs(&e.relate) {
-                    let _ = relations.add_relation(&e.id, &target, &pred);
+                    // Idempotent: a trailing-checkpoint replay can re-see an
+                    // already-added edge; `add_relation` appends unconditionally,
+                    // so guard it (the flat projection dedups on its own).
+                    if !relations.has_relation(&e.id, &target, &pred) {
+                        let _ = relations.add_relation(&e.id, &target, &pred);
+                    }
                     if let Some(col) = flat_col_for(&pred) {
                         let _ = store.add_to_list_field(&e.id, col, &target);
                     }
@@ -669,17 +674,35 @@ impl MutationEvent {
                 }
                 Ok(())
             }
-            MutationEvent::Commented(e) => store
-                .add_comment(&e.id, &e.text, e.agent.as_deref())
-                .map(|_| ())
-                .map_err(|err| format!("replay comment {}: {err}", e.id)),
+            MutationEvent::Commented(e) => {
+                // Idempotent: a checkpoint marker/manifest that trails the parquet
+                // by one commit re-presents an already-checkpointed comment, and
+                // `add_comment` mints a fresh sequential id each call — so a naive
+                // replay would duplicate it. `add_comment` resolves a missing agent
+                // to "unknown"; match that so the dedup sees the stored author.
+                let author = e.agent.as_deref().unwrap_or("unknown");
+                if store.has_comment(&e.id, author, &e.text) {
+                    return Ok(());
+                }
+                store
+                    .add_comment(&e.id, &e.text, e.agent.as_deref())
+                    .map(|_| ())
+                    .map_err(|err| format!("replay comment {}: {err}", e.id))
+            }
             MutationEvent::Ranked(e) => store
                 .update_rank(&e.id, e.rank)
                 .map_err(|err| format!("replay rank {}: {err}", e.id)),
-            MutationEvent::RelationAdded(e) => relations
-                .add_relation(&e.source, &e.target, &e.predicate)
-                .map(|_| ())
-                .map_err(|err| format!("replay relation.add {}->{}: {err}", e.source, e.target)),
+            // Idempotent: rebuild the edge only if the trailing-checkpoint tail did
+            // not already checkpoint it (`add_relation` appends unconditionally).
+            MutationEvent::RelationAdded(e) => {
+                if relations.has_relation(&e.source, &e.target, &e.predicate) {
+                    return Ok(());
+                }
+                relations
+                    .add_relation(&e.source, &e.target, &e.predicate)
+                    .map(|_| ())
+                    .map_err(|err| format!("replay relation.add {}->{}: {err}", e.source, e.target))
+            }
             // The run store is persisted by the handler outside the item
             // checkpoint, so there is no item-store state to replay.
             #[cfg(feature = "research")]

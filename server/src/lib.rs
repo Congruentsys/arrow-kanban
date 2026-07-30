@@ -13,9 +13,11 @@
 //!                              kanban.event.{type} → Command Deck / other consumers
 //! ```
 
+pub mod actor;
 pub mod engine;
 pub mod events;
 pub mod handlers;
 pub mod health;
+pub mod snapshot;
 pub mod state;
 pub mod storage;
