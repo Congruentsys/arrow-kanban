@@ -1572,7 +1572,7 @@ mod tests {
         assert!(dgx.items.iter().any(|i| i.id == "EX-2"));
     }
 
-    // ─── CH-6824: generic capability-aware worklist routing ─────────────────────
+    // ─── generic capability-aware worklist routing ──────────────────────────────
 
     /// Capability-tagged work is routed ONLY to agents that provide the required
     /// capability — the generic replacement for the removed hardcoded `assignee ==
@@ -1742,7 +1742,7 @@ mod tests {
             assert!(
                 !production.contains(needle.as_str()),
                 "hardcoded roster name {needle} found in the generic engine's production \
-                 code — route on a capability predicate, not a node name (CH-6824)"
+                 code — route on a capability predicate, not a node name"
             );
         }
     }
