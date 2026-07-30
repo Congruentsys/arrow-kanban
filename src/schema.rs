@@ -138,7 +138,7 @@ pub fn runs_schema() -> Arc<Schema> {
             DataType::Timestamp(TimeUnit::Millisecond, Some("UTC".into())),
             false,
         ),
-        Field::new("by_agent", DataType::Utf8, true), // "M5", "DGX", etc.
+        Field::new("by_agent", DataType::Utf8, true), // opaque agent id
         Field::new("forced", DataType::Boolean, false),
         Field::new("reason", DataType::Utf8, true), // reason for forced move
     ]))

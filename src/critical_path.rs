@@ -1721,30 +1721,99 @@ mod tests {
     }
 
     /// Closed-vocabulary grep-guard (mirrors the FOSS export-gate discipline): the
-    /// generic engine's PRODUCTION routing logic must hardcode NO fleet/node name.
-    /// Roster→capability policy lives in the consumer, never here. Test fixtures
-    /// below the `#[cfg(test)]` marker legitimately use real names, so only the
-    /// production region (before that marker) is scanned. Reintroducing the old
-    /// `assignee == "DGX"` rule turns this RED — exactly as the export gate blocks
-    /// brand/vocab leaks into the open tree.
+    /// generic engine's PRODUCTION code must hardcode NO fleet/node name. Roster→capability
+    /// policy lives in the consumer, never here.
+    ///
+    /// **Scans EVERY production source file in the workspace** (`src/` + `server/src/`), not
+    /// just this one. The ruling was that *the engine* hardcodes no node name; a
+    /// guard reading only its own file honored the letter for one file and left every other
+    /// file unguarded. Widening it immediately found one: `schema.rs` illustrated a column
+    /// with `// "M5", "DGX", etc.`, which is exactly the leak this is meant to stop.
+    ///
+    /// Test modules legitimately use real names as fixtures, so only the region BEFORE the
+    /// first `#[cfg(test)]` marker is scanned, per file.
     #[test]
     fn engine_routing_hardcodes_no_roster_names() {
-        let src = include_str!("critical_path.rs");
-        let production = src
-            .split("#[cfg(test)]")
-            .next()
-            .expect("source has a production region before the test module");
         const FORBIDDEN: &[&str] = &[
             "DGX", "DGX1", "DGX2", "M5", "Mini", "Air", "negaDGX", "negaM5", "negaMini",
         ];
-        for name in FORBIDDEN {
-            let needle = format!("\"{name}\"");
-            assert!(
-                !production.contains(needle.as_str()),
-                "hardcoded roster name {needle} found in the generic engine's production \
-                 code — route on a capability predicate, not a node name"
-            );
+        // Manifest dir is the workspace root (this crate's `src/` sits beside `server/`).
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut scanned = 0usize;
+        let mut findings: Vec<String> = Vec::new();
+
+        for dir in ["src", "server/src"] {
+            let mut stack = vec![root.join(dir)];
+            while let Some(d) = stack.pop() {
+                let entries = match std::fs::read_dir(&d) {
+                    Ok(e) => e,
+                    // server/src is absent when this crate is vendored alone; not a failure.
+                    Err(_) => continue,
+                };
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                        continue;
+                    }
+                    if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                        continue;
+                    }
+                    let Ok(text) = std::fs::read_to_string(&path) else {
+                        continue;
+                    };
+                    scanned += 1;
+                    // Fixtures inside `#[cfg(test)]` modules are legal; production is
+                    // everything else. Splitting on the FIRST marker (the obvious approach,
+                    // and what the single-file guard did) silently drops every line AFTER
+                    // the test module -- in crud.rs that is ~930 of 2135 lines, so a roster
+                    // name appended at the end of a file would never be seen. Track brace
+                    // depth instead and skip only the test module itself.
+                    // (Braces inside strings/comments are not parsed -- an approximation
+                    // that is safe in the conservative direction: it can only extend a skip
+                    // region within a test module, never expose production as unscanned.)
+                    let mut in_test = false;
+                    let mut seen_open = false;
+                    let mut depth: i32 = 0;
+                    for (idx, line) in text.lines().enumerate() {
+                        if !in_test && line.contains("#[cfg(test)]") {
+                            in_test = true;
+                            seen_open = false;
+                            depth = 0;
+                        }
+                        if in_test {
+                            depth += line.matches('{').count() as i32;
+                            depth -= line.matches('}').count() as i32;
+                            if depth > 0 {
+                                seen_open = true;
+                            }
+                            if seen_open && depth <= 0 {
+                                in_test = false;
+                            }
+                            continue;
+                        }
+                        for name in FORBIDDEN {
+                            let needle = format!("\"{name}\"");
+                            if line.contains(needle.as_str()) {
+                                findings.push(format!("{}:{}: {needle}", path.display(), idx + 1));
+                            }
+                        }
+                    }
+                }
+            }
         }
+
+        // A guard that silently scans nothing reads as coverage while covering nothing.
+        assert!(
+            scanned >= 2,
+            "roster guard scanned only {scanned} file(s) — the walk is broken, not the tree clean"
+        );
+        assert!(
+            findings.is_empty(),
+            "hardcoded roster name(s) in the generic engine's production code — route on a \
+             capability predicate, not a node name:\n  {}",
+            findings.join("\n  ")
+        );
     }
 
     #[test]
