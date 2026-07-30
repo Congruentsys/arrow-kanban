@@ -846,4 +846,145 @@ mod tests {
         assert!(detect_mutation("stats", &response).is_none());
         assert!(detect_mutation("query", &response).is_none());
     }
+
+    // ── Typed MutationEvent: projection byte-compat, versioning, replay ──────
+
+    fn created_ev() -> MutationEvent {
+        MutationEvent::Created(CreatedEvent {
+            id: "CH-9".into(),
+            title: "T".into(),
+            item_type: "chore".into(),
+            board: "development".into(),
+            priority: Some("high".into()),
+            assignee: Some("A".into()),
+            tags: vec!["x".into()],
+            related: vec!["EX-1".into()],
+            depends_on: vec![],
+            body: Some("b".into()),
+            relationships: vec![],
+        })
+    }
+
+    /// The three legacy events project to the EXACT frozen v1.0 payload shapes
+    /// (`ItemCreated`/`ItemMoved`/`ItemDeleted`), so existing consumers parse them
+    /// unchanged. Assert the projection equals the legacy struct's JSON.
+    #[test]
+    fn legacy_projections_are_byte_identical_to_the_v1_0_structs() {
+        let created = created_ev();
+        assert_eq!(created.subject_suffix(), "created");
+        assert_eq!(created.contract_version(), "1.0");
+        assert_eq!(
+            created.outbox_payload(),
+            serde_json::to_value(ItemCreated {
+                id: "CH-9".into(),
+                title: "T".into(),
+                item_type: "chore".into(),
+                board: "development".into(),
+                agent: None,
+            })
+            .unwrap(),
+            "Created projects to the frozen ItemCreated shape (no priority/tags leak)"
+        );
+
+        let moved = MutationEvent::Moved(MovedEvent {
+            id: "CH-9".into(),
+            from: "backlog".into(),
+            to: "in_progress".into(),
+            assignee: Some("A".into()),
+            force: false,
+            reason: None,
+            resolution: None,
+            closed_by: None,
+        });
+        assert_eq!(moved.subject_suffix(), "moved");
+        assert_eq!(moved.contract_version(), "1.0");
+        assert_eq!(
+            moved.outbox_payload(),
+            serde_json::to_value(ItemMoved {
+                id: "CH-9".into(),
+                from: "backlog".into(),
+                to: "in_progress".into(),
+                agent: None,
+            })
+            .unwrap()
+        );
+
+        let deleted = MutationEvent::Deleted(DeletedEvent { id: "CH-9".into() });
+        assert_eq!(deleted.subject_suffix(), "deleted");
+        assert_eq!(deleted.contract_version(), "1.0");
+        assert_eq!(
+            deleted.outbox_payload(),
+            serde_json::to_value(ItemDeleted { id: "CH-9".into() }).unwrap()
+        );
+    }
+
+    /// Events added by the outbox ship the additive v1.1 contract.
+    #[test]
+    fn new_events_ship_the_v1_1_contract() {
+        let commented = MutationEvent::Commented(CommentedEvent {
+            id: "CH-9".into(),
+            text: "hi".into(),
+            agent: None,
+        });
+        assert_eq!(commented.subject_suffix(), "commented");
+        assert_eq!(commented.contract_version(), "1.1");
+        assert_eq!(commented.outbox_payload()["comment"], "hi");
+    }
+
+    /// The commit-log form round-trips (serialize → deserialize is identity), so
+    /// a committed event reads back exactly for replay and re-publish.
+    #[test]
+    fn mutation_event_log_form_round_trips() {
+        let ev = created_ev();
+        let line = serde_json::to_string(&ev).expect("encode");
+        let back: MutationEvent = serde_json::from_str(&line).expect("decode");
+        assert_eq!(ev, back);
+    }
+
+    /// Replay reconstructs the write from the event: Created re-inserts under its
+    /// ORIGINAL id with its fields; Moved changes status; Deleted removes it;
+    /// and Created replay is idempotent (a re-seen create is a no-op, not a dup error).
+    #[test]
+    fn replay_reconstructs_and_is_idempotent() {
+        use arrow_kanban::crud::KanbanStore;
+        use arrow_kanban::relations::RelationsStore;
+        let mut store = KanbanStore::new();
+        let mut rels = RelationsStore::new();
+
+        created_ev()
+            .replay_into(&mut store, &mut rels)
+            .expect("replay create");
+        let item = store
+            .get_item("CH-9")
+            .expect("item present after create replay");
+        assert_eq!(item.num_rows(), 1);
+
+        // Idempotent: replaying the same create again is a no-op (no DuplicateId).
+        created_ev()
+            .replay_into(&mut store, &mut rels)
+            .expect("idempotent create replay");
+
+        MutationEvent::Moved(MovedEvent {
+            id: "CH-9".into(),
+            from: "backlog".into(),
+            to: "in_progress".into(),
+            assignee: None,
+            force: false,
+            reason: None,
+            resolution: None,
+            closed_by: None,
+        })
+        .replay_into(&mut store, &mut rels)
+        .expect("replay move");
+
+        MutationEvent::Deleted(DeletedEvent { id: "CH-9".into() })
+            .replay_into(&mut store, &mut rels)
+            .expect("replay delete");
+        assert!(store.get_item("CH-9").is_err(), "delete replay removed it");
+
+        // Idempotent delete: replaying delete on a gone item is a no-op.
+        MutationEvent::Deleted(DeletedEvent { id: "CH-9".into() })
+            .replay_into(&mut store, &mut rels)
+            .expect("idempotent delete replay");
+    }
 }
