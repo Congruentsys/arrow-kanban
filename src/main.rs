@@ -371,7 +371,7 @@ enum Commands {
         command: HddCommands,
     },
 
-    /// Set priority rank for an item (Captain ordering)
+    /// Set priority rank for an item
     Rank {
         /// Item ID
         id: String,
@@ -476,7 +476,7 @@ enum ConfigCommands {
         /// New value
         value: String,
         /// Who is making this change
-        #[arg(long, default_value = "Captain")]
+        #[arg(long, default_value = "admin")]
         requester: String,
     },
     /// Show diff: runtime config vs genome sealed defaults
@@ -1817,8 +1817,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 if all_batches.is_empty() {
                     println!("No items found.");
                 } else if flat {
-                    // Legacy flat view — backlog only, sorted by manual rank (Captain
-                    // ordering) then by priority-string fallback.
+                    // Legacy flat view — backlog only, sorted by manual rank then by priority-string fallback.
                     let results = store.query_items(Some("backlog"), None, None, None);
                     if results.is_empty() {
                         println!("No backlog items.");
@@ -1855,7 +1854,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                             };
                             get_key(a).cmp(&get_key(b))
                         });
-                        println!("Roadmap (flat, ranked by Captain rank then priority):");
+                        println!("Roadmap (flat, ranked by manual rank then priority):");
                         print!("{}", display::format_item_table(&sorted));
                     }
                 } else {
@@ -2001,19 +2000,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
 
                     println!("{}", validate::format_board_summary(&reports));
 
-                    // CH-6502: body⇔tag pending-ratification consistency (a board-level check —
-                    // the parent-voyage exemption needs the whole item set).
-                    let ratification = validate::check_ratification_consistency(&batches);
-                    let ratification_errors = ratification
-                        .iter()
-                        .any(|f| f.severity == validate::Severity::Error);
-                    let formatted = validate::format_ratification_findings(&ratification);
-                    if !formatted.is_empty() {
-                        println!();
-                        println!("{formatted}");
-                    }
-
-                    if any_violations || ratification_errors {
+                    if any_violations {
                         process::exit(1);
                     }
                 }

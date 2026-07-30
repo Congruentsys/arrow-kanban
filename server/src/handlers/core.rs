@@ -792,21 +792,7 @@ pub(crate) fn handle_validate(
     store: &KanbanStore,
     relations: &RelationsStore,
 ) -> Result<Vec<u8>, Vec<u8>> {
-    let mut issues = arrow_kanban::validate_hdd(store, relations);
-
-    // CH-6502: body⇔tag pending-ratification consistency. The pollution class lives on the
-    // development board (voyages/expeditions/chores carry `pending-ratification`); the check needs
-    // the whole dev set so a child's parent-voyage tag can exempt it. Folded into the same issues
-    // list the client already prints.
-    let dev_items = store.query_items(None, None, Some("development"), None);
-    let findings = arrow_kanban::validate::check_ratification_consistency(&dev_items);
-    for f in &findings {
-        let sev = match f.severity {
-            arrow_kanban::validate::Severity::Error => "ERROR",
-            arrow_kanban::validate::Severity::Warning => "WARNING",
-        };
-        issues.push(format!("[ratification {sev}] {}: {}", f.item_id, f.message));
-    }
+    let issues = arrow_kanban::validate_hdd(store, relations);
 
     serialize_response(&serde_json::json!({
         "valid": issues.is_empty(),
@@ -984,7 +970,7 @@ pub(crate) fn handle_roadmap(
         let mut backlog: Vec<_> = items.iter().filter(|i| i.status == "backlog").collect();
         backlog.sort_by_key(|i| critical_path::sort_key(i));
         let mut lines = vec![format!(
-            "Roadmap (flat, ranked by Captain rank then priority — {} backlog items):\n",
+            "Roadmap (flat, ranked by manual rank then priority — {} backlog items):\n",
             backlog.len()
         )];
         lines.push(format!(
