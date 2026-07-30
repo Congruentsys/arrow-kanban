@@ -71,6 +71,13 @@ pub struct CreateItemInput {
 }
 
 /// The in-memory kanban store — holds items, runs, and comments as RecordBatches.
+///
+/// `Clone` is an O(#batches) Arc-pointer copy: every field is either a
+/// `Vec<RecordBatch>` (whose columns are `Arc`'d Arrow arrays — the clone bumps
+/// the refcounts, it never copies column data) or an `Arc<Schema>`. This is what
+/// lets an [`AggregateSnapshot`](../../arrow_kanban_server/snapshot/struct.AggregateSnapshot.html)
+/// hold a point-in-time copy of the whole store cheaply, with no torn-write risk.
+#[derive(Clone)]
 pub struct KanbanStore {
     items_batches: Vec<RecordBatch>,
     runs_batches: Vec<RecordBatch>,
@@ -1121,6 +1128,48 @@ impl KanbanStore {
         self.comments_batches.push(batch);
         self.touch_updated_at(item_id)?;
         Ok(comment_id)
+    }
+
+    /// Whether a comment with this exact `(item_id, author, text)` already exists.
+    ///
+    /// Used ONLY by crash-recovery replay to make [replaying a committed comment]
+    /// idempotent: a checkpoint marker that trails the parquet by one commit can
+    /// re-present an already-checkpointed comment, and `add_comment` mints a fresh
+    /// sequential id every time, so a naive replay would duplicate it. The dedup is
+    /// by content because the on-disk log carries no minted id (the wire reply — the
+    /// frozen contract — does not surface it). The accepted trade: two GENUINELY
+    /// identical comments (same item, author, text) landing inside a single
+    /// crash-recovery tail would collapse to one — a corner far rarer than the
+    /// double-apply it prevents, and consistent with the id-present skip that already
+    /// makes create/delete replay idempotent.
+    pub fn has_comment(&self, item_id: &str, author: &str, text: &str) -> bool {
+        use crate::schema::cmt_col;
+        for batch in &self.comments_batches {
+            let item_ids = batch
+                .column(cmt_col::ITEM_ID)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("item_id column");
+            let authors = batch
+                .column(cmt_col::AUTHOR)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("author column");
+            let bodies = batch
+                .column(cmt_col::BODY)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("body column");
+            for i in 0..batch.num_rows() {
+                if item_ids.value(i) == item_id
+                    && authors.value(i) == author
+                    && bodies.value(i) == text
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Set `updated_at` to the current timestamp on an item.

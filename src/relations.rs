@@ -20,6 +20,12 @@ pub enum RelationError {
 pub type Result<T> = std::result::Result<T, RelationError>;
 
 /// The relations store — holds relation RecordBatches.
+///
+/// `Clone` is an O(#batches) Arc-pointer copy: the batches' columns are `Arc`'d
+/// Arrow arrays (clone bumps refcounts, never copies data) and the schema is an
+/// `Arc`. This lets an [`AggregateSnapshot`](../../arrow_kanban_server/snapshot/struct.AggregateSnapshot.html)
+/// bind the relations table to a point-in-time seq cheaply.
+#[derive(Clone)]
 pub struct RelationsStore {
     batches: Vec<RecordBatch>,
     schema: Arc<arrow::datatypes::Schema>,
@@ -123,6 +129,47 @@ impl RelationsStore {
             target_id.to_string(),
             predicate.to_string(),
         ))
+    }
+
+    /// Whether a non-deleted edge `source --predicate--> target` already exists.
+    ///
+    /// Used by crash-recovery replay to make replaying a committed `relation.add`
+    /// idempotent: a checkpoint marker that trails the parquet by one commit can
+    /// re-present an already-checkpointed edge, and [`add_relation`](Self::add_relation)
+    /// appends a fresh row every time, so a naive replay would double the edge.
+    pub fn has_relation(&self, source_id: &str, target_id: &str, predicate: &str) -> bool {
+        for batch in &self.batches {
+            let sources = batch
+                .column(rel_col::SOURCE_ID)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("source_id");
+            let targets = batch
+                .column(rel_col::TARGET_ID)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("target_id");
+            let predicates = batch
+                .column(rel_col::PREDICATE)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("predicate");
+            let deleted = batch
+                .column(rel_col::DELETED)
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .expect("deleted");
+            for i in 0..batch.num_rows() {
+                if !deleted.value(i)
+                    && sources.value(i) == source_id
+                    && targets.value(i) == target_id
+                    && predicates.value(i) == predicate
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Query all relations for an item (as source OR target).
