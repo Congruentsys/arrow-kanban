@@ -82,6 +82,17 @@ prose_test 'format!("EX-3001 requires review")' \
     || fail "(b5) regressed: misses a leading citation followed by prose."
 prose_test 'let t = ("EX-3001", "title");'                && fail "(b5) regressed: fires on a bare fixture tuple."
 pass "positive controls: (b5) catches printed citations (mid-string AND leading) and spares five real fixture shapes."
+# CH-6864 — pin the documented title-fixture TRADE, both halves. Shape (ii) fires on a
+# title-shaped fixture in the real ID range; the allowlist strip is what spares one written
+# with the synthetic numbers. If either half silently changed, the documented convention in
+# export-gate.sh would become false without anything going red.
+prose_test 'let title = "EX-3001 Test Item";' \
+    || fail "(b5) trade changed: a real-range title fixture no longer fires — export-gate.sh's documented trade is now wrong."
+prose_test 'let title = "EX-1234 Test Item";' \
+    && fail "(b5) mitigation BROKEN: a synthetic-number title fixture is no longer spared by the allowlist strip."
+pass "positive controls: the documented (b5) title-fixture trade holds in both directions."
+
+
 
 # helper: inject, assert the gate goes RED, restore, and confirm the file is byte-identical.
 # CH-6863: the injection tally is COUNTED here, never written by hand. The summary line used

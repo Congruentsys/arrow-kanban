@@ -134,6 +134,19 @@ fi
 # not catch its own motivating case. What separates (ii) from fixture DATA is what FOLLOWS the
 # ID — prose continues with a space/colon then a letter, whereas fixture data closes its quote
 # immediately (`"EX-3001",`). Both directions are pinned by controls in red-battery.sh.
+# KNOWN TRADE for shape (ii) (CH-6864, found reviewing CH-6863). This tool's item titles
+# conventionally BEGIN with an ID, so a title-shaped fixture in the real ID range trips it:
+#     let title = "EX-3001 Test Item";   -> FIRES (false positive on legitimate product data)
+# No such fixture exists in the tree today (full-tree hunt: 0 hits), and the mitigation is
+# already in place rather than hypothetical -- the allowlist strip runs FIRST, so a fixture
+# written with the synthetic numbers is spared:
+#     let title = "EX-1234 Test Item";   -> SPARED
+# CONVENTION: fixtures that need a title-shaped ID use the synthetic allowlist numbers
+# (-42 / -1234 / -1235 / -1240). Both halves are pinned by controls in red-battery.sh, so
+# the mitigation cannot silently stop working. This is documented rather than "fixed"
+# because narrowing shape (ii) enough to admit real-range titles would re-open the
+# leading-position hole CH-6863 closed -- the gate would stop seeing
+# "HZ-6053 INVARIANT VIOLATED ...", which is the shape that actually shipped.
 PROSE_ID="([a-z]{2,} +$PROV_ID|\"$PROV_ID[: ]+[A-Za-z])"
 prosehits=$(grep -rnE "$PROSE_ID" $SCAN_DIRS 2>/dev/null \
     | grep -vE 'export-gate|red-battery' \
