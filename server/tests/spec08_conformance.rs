@@ -50,7 +50,9 @@ fn unknown_verb_is_a_typed_error_not_a_success() {
 fn core_verb_set_is_offered() {
     let dir = tempfile::tempdir().unwrap();
     let mut st = state(dir.path());
-    let core = [
+    // Exactly the published spec-08 §3 verb table (reads + writes). `query` is offered-
+    // but-UNSUPPORTED in the open engine — still a recognised verb, never UNKNOWN_COMMAND.
+    let spec08_core = [
         // reads (§3)
         "list",
         "show",
@@ -63,10 +65,7 @@ fn core_verb_set_is_offered() {
         "stats",
         "export",
         "validate",
-        "templates",
-        "critical-path",
-        "next-id",
-        // writes (§3)
+        "templates", // writes (§3)
         "create",
         "move",
         "update",
@@ -75,11 +74,15 @@ fn core_verb_set_is_offered() {
         "delete",
         "ratify",
     ];
-    for verb in core {
+    // arrow-kanban offers a SUPERSET beyond §3 (a conformant server MAY, §3). Exercised too
+    // so a regression dropping them is caught, but kept SEPARATE so `spec08_core` never
+    // drifts from the published verb table (E2 review, note 1).
+    let superset = ["critical-path", "next-id"];
+    for verb in spec08_core.iter().chain(superset.iter()) {
         let r = call(&mut st, verb, json!({}));
         assert_ne!(
             r["code"], "UNKNOWN_COMMAND",
-            "core verb `{verb}` MUST be offered (spec 08 §3): {r}"
+            "verb `{verb}` MUST be offered: {r}"
         );
     }
 }

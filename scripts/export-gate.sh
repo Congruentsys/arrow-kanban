@@ -35,7 +35,10 @@ fi
 # treats TAGS as opaque data, so a bare "pending-ratification" tag STRING is fine —
 # what moves inward is the enforcement GATE machinery (its identifiers), the
 # Captain role/rank framing, the decision-ledger, and COG/training semantics.
-D1_CONCEPTS='\bcaptain\b|check_ratification|PENDING_TAG|body_says_pending|RatificationFinding|format_ratification|voyage_id_from_tag|decision-?ledger|training_queue|training_runner|cog-?training'
+# \bcaptain[_-]? (NOT \bcaptain\b) so the identifier `captain_only` is caught — `_` is a
+# word char, so a trailing \b never matches after `captain` (E2 review Finding 1, DGX2).
+# The tier/being/genome/ship terms cover the autonomy-tier + being-runtime config vocab.
+D1_CONCEPTS='\bcaptain[_-]?|check_ratification|PENDING_TAG|body_says_pending|RatificationFinding|format_ratification|voyage_id_from_tag|decision-?ledger|training_queue|training_runner|cog-?training|being_approved|sealed_genome|being_config|ship_config|awakening|cognitive_params|autonomy[_ -]?tier'
 d1hits=$(grep -rniE "$D1_CONCEPTS" $SCAN_DIRS 2>/dev/null | grep -v 'export-gate' || true)
 if [ -n "$d1hits" ]; then
     echo "$d1hits" | head -20 >&2
