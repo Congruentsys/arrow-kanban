@@ -18,3 +18,4 @@ pub mod events;
 pub mod handlers;
 pub mod health;
 pub mod state;
+pub mod storage;

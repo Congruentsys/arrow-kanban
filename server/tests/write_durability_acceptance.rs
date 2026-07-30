@@ -34,12 +34,12 @@ use arrow_kanban_server::handlers::dispatch;
 use arrow_kanban_server::state::ServerState;
 
 fn fresh_state(dir: &std::path::Path) -> ServerState {
-    ServerState {
-        store: arrow_kanban::persist::load_store(dir).expect("load store"),
-        relations: arrow_kanban::persist::load_relations(dir).expect("load relations"),
-        data_dir: dir.to_path_buf(),
-        health: arrow_kanban_server::health::HealthGate::new(),
-    }
+    ServerState::new(
+        arrow_kanban::persist::load_store(dir).expect("load store"),
+        arrow_kanban::persist::load_relations(dir).expect("load relations"),
+        dir.to_path_buf(),
+        arrow_kanban_server::health::HealthGate::new(),
+    )
 }
 
 fn json(bytes: &[u8]) -> serde_json::Value {

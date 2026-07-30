@@ -4,9 +4,9 @@
 use super::error_response;
 use crate::engine::KanbanReply;
 use arrow_kanban::relations::RelationsStore;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RelationAddRequest {
     source_id: String,
     target_id: String,
@@ -31,7 +31,7 @@ pub(crate) fn handle_relation_add_typed(
 
 // ── Relation Query ──────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct RelationQueryRequest {
     item_id: String,
 }

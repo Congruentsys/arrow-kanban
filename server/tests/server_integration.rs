@@ -11,12 +11,12 @@ use arrow_kanban_server::handlers::dispatch;
 use arrow_kanban_server::state::ServerState;
 
 fn test_state(dir: &std::path::Path) -> ServerState {
-    ServerState {
-        store: arrow_kanban::crud::KanbanStore::new(),
-        relations: arrow_kanban::relations::RelationsStore::new(),
-        data_dir: dir.to_path_buf(),
-        health: arrow_kanban_server::health::HealthGate::new(),
-    }
+    ServerState::new(
+        arrow_kanban::crud::KanbanStore::new(),
+        arrow_kanban::relations::RelationsStore::new(),
+        dir.to_path_buf(),
+        arrow_kanban_server::health::HealthGate::new(),
+    )
 }
 
 // ─── Create + Show + List Lifecycle ─────────────────────────────────────────

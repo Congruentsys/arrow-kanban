@@ -9,7 +9,7 @@ use arrow_kanban::relations::RelationsStore;
 use arrow_kanban::{critical_path, display, export};
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CreateRequest {
     title: String,
     item_type: String,
@@ -147,7 +147,7 @@ pub(crate) fn handle_create_typed(
 
 // ── Move ────────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MoveRequest {
     id: String,
     status: String,
@@ -243,7 +243,7 @@ pub(crate) fn handle_move_typed(
 
 // ── Ratify ───────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RatifyRequest {
     phase_tag: String,
 }
@@ -277,7 +277,7 @@ pub(crate) fn handle_ratify_typed(
 
 // ── Update ──────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct UpdateRequest {
     id: String,
     title: Option<String>,
@@ -457,7 +457,7 @@ pub(crate) fn handle_update_typed(
 
 // ── Comment ────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CommentRequest {
     id: String,
     text: String,
@@ -485,7 +485,7 @@ pub(crate) fn handle_comment_typed(
 
 // ── Rank ────────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RankRequest {
     id: String,
     /// Manual rank. `Some(n)` sets it (lower = higher priority); `None` clears it.
@@ -513,7 +513,7 @@ pub(crate) fn handle_rank_typed(
 
 // ── List ────────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct ListRequest {
     status: Option<String>,
     item_type: Option<String>,
@@ -637,7 +637,7 @@ pub(crate) fn handle_list_typed(
 
 // ── Show ────────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct ShowRequest {
     id: String,
     format: Option<String>,
@@ -689,7 +689,7 @@ pub(crate) fn handle_show_typed(
 
 // ── Board ───────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct BoardRequest {
     board: Option<String>,
 }
@@ -777,7 +777,7 @@ pub(crate) fn handle_stats_typed(
 
 // ── Delete ──────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DeleteRequest {
     id: String,
 }
@@ -823,7 +823,7 @@ pub(crate) fn handle_validate_typed(
 /// old non-optional `String` rejected it with "invalid type: null, expected a string").
 /// `format`/`board`/`item_type`/`status` carry the board-export query + the requested
 /// format so `--format json` is honored instead of always falling back to markdown.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct ExportRequest {
     #[serde(default)]
     id: Option<String>,
@@ -945,7 +945,7 @@ pub(crate) fn handle_export_typed(
 //
 // Graph computation on the server's RecordBatches — no data leaves the server.
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct RoadmapRequest {
     #[serde(default)]
     flat: bool,
@@ -1042,7 +1042,7 @@ pub(crate) fn handle_critical_path_typed(store: &KanbanStore) -> Result<KanbanRe
     Ok(KanbanReply::Value(serde_json::json!({ "view": view })))
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct WorklistRequest {
     #[serde(default = "default_agents")]
     agents: String,
@@ -1099,7 +1099,7 @@ pub(crate) fn handle_worklist_typed(
 
 // ── Next ID ─────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct NextIdRequest {
     item_type: String,
 }
@@ -1123,7 +1123,7 @@ pub(crate) fn handle_next_id_typed(
 
 // ── History ─────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct HistoryRequest {
     #[serde(default)]
     week: bool,
@@ -1351,7 +1351,7 @@ pub(crate) fn handle_blocked_typed(store: &KanbanStore) -> Result<KanbanReply, V
 
 // ── HDD Create ──────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HddCreateRequest {
     title: String,
     #[serde(default)]
