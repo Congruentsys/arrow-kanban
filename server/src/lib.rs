@@ -20,6 +20,7 @@ pub mod extension;
 pub mod handlers;
 pub mod health;
 pub mod lease;
+pub mod replica;
 pub mod snapshot;
 pub mod state;
 pub mod storage;
