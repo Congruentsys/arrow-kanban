@@ -145,6 +145,12 @@ mutate_expect_red "closed-crate/NuSy ref -> extension.rs (new command-extension 
 mutate_expect_red "closed-crate/NuSy ref -> extension_persistence_acceptance.rs (new 3c-ii test)" server/tests/extension_persistence_acceptance.rs $'\n// pulls nusy-graph-review internals\n'
 mutate_expect_red "closed-crate/NuSy ref -> structural_core_only_acceptance.rs (new F5 test)"      server/tests/structural_core_only_acceptance.rs $'\n// pulls nusy-graph-review internals\n'
 
+# E3 PR-4 — the read-only replica src + its gap acceptance battery are NEW surface;
+# prove the gate scans them too (a closed-crate/NuSy ref into either must go RED, not
+# ride in un-scanned — a new file with no injection is the battery's own blind spot).
+mutate_expect_red "closed-crate/NuSy ref -> replica.rs (new read-side src)"                 server/src/replica.rs                     $'\n// pulls nusy-graph-review internals\n'
+mutate_expect_red "closed-crate/NuSy ref -> replica_gap_acceptance.rs (new PR-4 test)"      server/tests/replica_gap_acceptance.rs    $'\n// pulls nusy-graph-review internals\n'
+
 # final: tree restored + gate green again.
 "${GATE[@]}" >/dev/null 2>&1 || fail "gate is not green after restore — a mutation leaked."
 echo "✅ [red-battery] all $INJECTIONS injections RED; clean tree green; positive controls hold."
