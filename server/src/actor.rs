@@ -82,11 +82,13 @@ where
     L: WriterLease + Send + 'static,
     F: FnOnce(KanbanEngine<B, L>) + Send + 'static,
 {
-    // Seed the snapshot from the loaded state at its committed high-water.
+    // Seed the snapshot from the loaded state at its committed high-water,
+    // including the installed extension's table bind (None for the open engine).
     let initial = Arc::new(AggregateSnapshot::new(
         &engine.store,
         &engine.relations,
         engine.committed_seq(),
+        engine.extension.as_ref().and_then(|x| x.snapshot()),
     ));
     let cell: SnapshotCell = Arc::new(RwLock::new(initial));
     let task_cell = cell.clone();
@@ -109,6 +111,7 @@ where
                     &engine.store,
                     &engine.relations,
                     seq_after,
+                    engine.extension.as_ref().and_then(|x| x.snapshot()),
                 ));
                 *task_cell
                     .write()

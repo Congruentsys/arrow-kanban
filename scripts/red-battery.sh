@@ -139,6 +139,12 @@ mutate_expect_red "closed vocab -> the new outbox battery (server/tests)"   serv
 # too (a closed-crate/NuSy ref into extension.rs must go RED, not ride in un-scanned).
 mutate_expect_red "closed-crate/NuSy ref -> extension.rs (new command-extension src)" server/src/extension.rs $'\n// pulls nusy-graph-review internals\n'
 
+# E3 3c-ii — the persistence acceptance battery and the F5 structural test are NEW
+# test surface; prove the gate scans them too (a closed-crate/NuSy ref into either
+# must go RED, not ride in un-scanned).
+mutate_expect_red "closed-crate/NuSy ref -> extension_persistence_acceptance.rs (new 3c-ii test)" server/tests/extension_persistence_acceptance.rs $'\n// pulls nusy-graph-review internals\n'
+mutate_expect_red "closed-crate/NuSy ref -> structural_core_only_acceptance.rs (new F5 test)"      server/tests/structural_core_only_acceptance.rs $'\n// pulls nusy-graph-review internals\n'
+
 # final: tree restored + gate green again.
 "${GATE[@]}" >/dev/null 2>&1 || fail "gate is not green after restore — a mutation leaked."
 echo "✅ [red-battery] all $INJECTIONS injections RED; clean tree green; positive controls hold."

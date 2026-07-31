@@ -18,9 +18,11 @@
 //! torn write: the tables it holds are exactly those a single commit made
 //! durable, all at the same `seq`.
 
+use crate::extension::ExtensionSnapshot;
 use crate::storage::{SCHEMA_VERSION, Seq};
 use arrow_kanban::crud::KanbanStore;
 use arrow_kanban::relations::RelationsStore;
+use std::sync::Arc;
 
 /// An immutable, coherent, O(1)-cloneable view of the whole board at one seq.
 ///
@@ -38,27 +40,42 @@ pub struct AggregateSnapshot {
     pub seq: Seq,
     /// The on-disk table-contract version bound with the tables.
     pub schema_version: u32,
+    /// An optional bind of the installed extension's tables, as of `seq`. `None`
+    /// for the open engine (no extension) or an extension that exposes no
+    /// snapshot. Held as a CONCRETE `Arc<dyn ExtensionSnapshot>` so the snapshot —
+    /// and the [`KanbanHandle`](crate::actor::KanbanHandle) / actor that share it —
+    /// stay NON-generic over the extension type; a consumer downcasts it to its own
+    /// snapshot type. Cloning is the O(1) `Arc`-pointer copy the rest of the
+    /// snapshot already is.
+    pub ext: Option<Arc<dyn ExtensionSnapshot>>,
 }
 
 impl AggregateSnapshot {
-    /// Bind the current `store` + `relations` to `seq` — an O(#batches)
-    /// Arc-pointer copy of every table, no column data copied.
-    pub fn new(store: &KanbanStore, relations: &RelationsStore, seq: Seq) -> Self {
+    /// Bind the current `store` + `relations` (+ an optional `ext` table bind) to
+    /// `seq` — an O(#batches) Arc-pointer copy of every table, no column data copied.
+    pub fn new(
+        store: &KanbanStore,
+        relations: &RelationsStore,
+        seq: Seq,
+        ext: Option<Arc<dyn ExtensionSnapshot>>,
+    ) -> Self {
         AggregateSnapshot {
             store: store.clone(),
             relations: relations.clone(),
             seq,
             schema_version: SCHEMA_VERSION,
+            ext,
         }
     }
 
-    /// An empty snapshot at seq 0 (a fresh, pre-commit board).
+    /// An empty snapshot at seq 0 (a fresh, pre-commit board) with no ext bind.
     pub fn empty() -> Self {
         AggregateSnapshot {
             store: KanbanStore::new(),
             relations: RelationsStore::new(),
             seq: 0,
             schema_version: SCHEMA_VERSION,
+            ext: None,
         }
     }
 
@@ -96,9 +113,10 @@ mod tests {
         let id = seed(&mut store, "one");
         let rels = RelationsStore::new();
 
-        let snap = AggregateSnapshot::new(&store, &rels, 7);
+        let snap = AggregateSnapshot::new(&store, &rels, 7, None);
         assert_eq!(snap.seq(), 7);
         assert_eq!(snap.schema_version, SCHEMA_VERSION);
+        assert!(snap.ext.is_none(), "no extension bound on the open path");
         assert!(snap.store.get_item(&id).is_ok(), "snapshot holds the item");
     }
 
@@ -111,7 +129,7 @@ mod tests {
         let first = seed(&mut store, "first");
         let rels = RelationsStore::new();
 
-        let snap = AggregateSnapshot::new(&store, &rels, 1);
+        let snap = AggregateSnapshot::new(&store, &rels, 1, None);
 
         // Mutate the source AFTER taking the snapshot.
         let second = seed(&mut store, "second");
