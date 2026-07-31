@@ -612,6 +612,53 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
         self.backend.events_since(after)
     }
 
+    /// Restore the installed extension's tables on load — the 3c-ii completion of
+    /// the extension write path. Call once, after the extension is installed and
+    /// the core state is loaded (`backend.load`), before serving.
+    ///
+    /// If an extension is present: load its derived checkpoint
+    /// ([`EngineExtension::restore`]) for the seq it reflects, then replay every
+    /// committed [`MutationEvent::Extension`] with `seq` strictly greater than that
+    /// through [`EngineExtension::replay`]. A torn or absent ext checkpoint restores
+    /// from `0`, so the whole ext tail is replayed idempotently — the ext state is
+    /// durable across a restart, checkpoint-or-log. A no-op for the open engine.
+    ///
+    /// This drives ONLY the extension's tables; the core store's load/replay is the
+    /// backend's job, so [`StorageBackend`] stays unchanged.
+    pub fn restore_extension(&mut self) -> Result<(), StoreError> {
+        if self.extension.is_none() {
+            return Ok(());
+        }
+        let dir = crate::health::store_dir(&self.data_dir);
+        // (1) Load the ext checkpoint for the seq it reflects. The `&mut` borrow of
+        // the extension is released before the backend read below.
+        let ext_seq = self
+            .extension
+            .as_mut()
+            .expect("extension present")
+            .restore(&dir)
+            .map_err(StoreError::Checkpoint)?;
+        // (2) Read the committed tail the ext checkpoint does not yet reflect
+        // (immutable backend borrow, disjoint from the extension field).
+        let tail = self.backend.events_since(ext_seq)?;
+        // (3) Replay each EXTENSION event onto the ext tables; core events belong to
+        // the core store and are skipped here. `replay` is idempotent, so a torn
+        // checkpoint re-presenting the tail does not double a row.
+        let ext = self.extension.as_mut().expect("extension present");
+        for committed in tail {
+            if let crate::events::MutationEvent::Extension {
+                namespace,
+                kind,
+                payload,
+            } = committed.event
+            {
+                ext.replay(&namespace, &kind, &payload)
+                    .map_err(StoreError::Checkpoint)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Decode → apply → encode. Strips the `kanban.cmd.` subject prefix first.
     ///
     /// A verb the CORE `parse` does not recognise is offered to the registered
@@ -754,7 +801,27 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
                         )),
                     };
                     match commit {
-                        Ok(_seq) => self.health.record_persist_success(),
+                        Ok(seq) => {
+                            self.health.record_persist_success();
+                            // A derived, POST-commit extension checkpoint — the
+                            // analogue of the core `_checkpoint.manifest`, written
+                            // alongside it (NOT through `StorageBackend`, which is
+                            // unchanged). Best-effort: the ext state is already
+                            // durable in the event log, so a torn ext checkpoint is
+                            // replayed from the log tail on load. A failure here
+                            // NEVER fails the commit — it only leaves the ext
+                            // checkpoint trailing, which the idempotent replay tolerates.
+                            if let Some(ext) = self.extension.as_ref() {
+                                let dir = crate::health::store_dir(&self.data_dir);
+                                if let Err(e) = ext.checkpoint(&dir, seq) {
+                                    eprintln!(
+                                        "kanban: extension checkpoint after commit seq={seq} \
+                                         failed ({e}); the uncovered ext tail will be replayed \
+                                         idempotently on load."
+                                    );
+                                }
+                            }
+                        }
                         Err(err) => {
                             self.health.record_persist_failure(&verb, &err);
                             return KanbanReply::error(

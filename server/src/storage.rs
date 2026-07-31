@@ -183,7 +183,16 @@ struct CheckpointManifest {
 }
 
 /// The parquet file set a checkpoint covers — the tables `save_all` persists.
-const CHECKPOINT_FILES: &[&str] = &["items", "runs", "item_comments", "relations"];
+///
+/// This is the LOAD-BEARING "public schema names no consumer table" contract: the
+/// core checkpoint covers ONLY these four core tables. An extension table's parquet
+/// name must only ever be a RUNTIME string returned from
+/// [`EngineExtension::checkpoint`](crate::extension::EngineExtension::checkpoint) —
+/// never baked into this (or any) public constant, where the lexical export gate
+/// cannot judge a generic literal like `"proposals"`. The structural invariant test
+/// (`structural_core_only_acceptance.rs`) pins this set, so adding an ext name here
+/// goes RED.
+pub const CHECKPOINT_FILES: &[&str] = &["items", "runs", "item_comments", "relations"];
 
 /// The default backend: append-only event log + derived Parquet checkpoint.
 pub struct ParquetBackend {

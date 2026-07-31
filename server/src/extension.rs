@@ -27,15 +27,34 @@
 //! — so a fenced or degraded extension mutation leaves no table change, no event,
 //! and no seq advance, identically to core.
 //!
-//! # Not here (3c-ii)
+//! # The persistence path (3c-ii)
 //!
-//! The persistence half — checkpoint / restore of extension tables and their
-//! binding into the aggregate snapshot, plus load-time event replay — is a
-//! SEPARATE, additive change. In 3c-i an extension's events are durable in the
-//! commit log but are not yet restored on load; 3c-ii completes that.
+//! 3c-i left an extension's events durable in the commit log but not restored on
+//! load. 3c-ii completes the seam with three ADDITIVE, defaulted methods, so no
+//! existing `impl EngineExtension` has to change:
+//! - [`checkpoint`](EngineExtension::checkpoint) — a derived, engine-orchestrated
+//!   POST-commit step (like the core `_checkpoint.manifest`): write the extension's
+//!   own table parquet(s) via tmp+rename and return the file names covered. The
+//!   [`StorageBackend`](crate::storage::StorageBackend) is UNCHANGED — the ext
+//!   checkpoint rides alongside the core manifest write, never through the backend.
+//! - [`restore`](EngineExtension::restore) — load the ext checkpoint on startup and
+//!   return the seq it reflects (`0` if none). The engine then replays the ext
+//!   event tail with `seq > ext_seq` through [`replay`](EngineExtension::replay), so
+//!   a torn/absent ext checkpoint is recovered from the log — not lost, not doubled.
+//! - [`snapshot`](EngineExtension::snapshot) — an O(1) `Arc` bind of the current ext
+//!   tables into the [`AggregateSnapshot`](crate::snapshot::AggregateSnapshot), read
+//!   back by a consumer through a `dyn Any` downcast to its OWN snapshot type.
+//!
+//! The three methods deal ONLY in `dir`/`seq`/file-name strings + `dyn Any`; the
+//! public crate never names a consumer table. Each has a safe default (no
+//! checkpoint, restore-from-zero, no snapshot), so the seam widens without
+//! disturbing the write-path impls.
 
 use crate::engine::KanbanReply;
 use crate::events::MutationEvent;
+use crate::storage::Seq;
+use std::path::Path;
+use std::sync::Arc;
 
 /// A namespaced command extension: one verb family with its own tables, routed
 /// through the engine's commit boundary.
@@ -65,15 +84,65 @@ pub trait EngineExtension {
     fn derive_event(&self, cmd: &ExtCommand, reply: &KanbanReply) -> Option<MutationEvent>;
 
     /// Rebuild the extension's tables from one logged event `{namespace, kind,
-    /// payload}`. Idempotent (a replay may re-see an already-applied event). In
-    /// 3c-i this is exercised directly; the engine's load-time replay
-    /// orchestration is 3c-ii.
+    /// payload}`. Idempotent (a replay may re-see an already-applied event) — an
+    /// already-present row MUST be skipped, exactly as the core store's
+    /// `has_comment`/`has_relation` replays do, so a torn checkpoint that
+    /// re-presents the log tail cannot double a row. Driven directly in 3c-i; the
+    /// engine drives it on load in 3c-ii (see [`restore`](Self::restore)).
     fn replay(
         &mut self,
         namespace: &str,
         kind: &str,
         payload: &serde_json::Value,
     ) -> Result<(), String>;
+
+    /// Write the extension's own table(s) to a derived checkpoint under `dir` (the
+    /// store directory, alongside the core `_checkpoint.manifest`) and return the
+    /// file names it covers. A POST-commit, best-effort step the engine calls after
+    /// a successful `backend.commit`: the ext state is ALREADY durable in the event
+    /// log, so a failed or torn checkpoint is replayed from the log tail on load —
+    /// never a lost write. Write via tmp+rename so a crash leaves the previous
+    /// complete checkpoint in place.
+    ///
+    /// The default writes nothing (an extension with no persisted table, or the
+    /// 3c-i write-path-only impls): its events still live in the log and restore
+    /// via full replay.
+    fn checkpoint(&self, _dir: &Path, _seq: Seq) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Load the extension's checkpoint from `dir` and return the committed `seq` it
+    /// reflects (`0` if there is none). The engine replays every ext event with
+    /// `seq` strictly greater than the returned value, so returning `0` requests a
+    /// full-log replay (the correct, safe default for an extension with no
+    /// checkpoint, or a pre-3cii store whose ext events predate the checkpoint).
+    fn restore(&mut self, _dir: &Path) -> Result<Seq, String> {
+        Ok(0)
+    }
+
+    /// An O(1) `Arc`-bind of the current ext tables for the aggregate snapshot, or
+    /// `None` for an extension that exposes no snapshot. The engine calls this after
+    /// each durable commit and stores the result in
+    /// [`AggregateSnapshot::ext`](crate::snapshot::AggregateSnapshot); a consumer
+    /// downcasts it to its own [`ExtensionSnapshot`] type to read the tables
+    /// zero-copy. The default binds nothing.
+    fn snapshot(&self) -> Option<Arc<dyn ExtensionSnapshot>> {
+        None
+    }
+}
+
+/// An immutable, point-in-time bind of an extension's tables, carried inside an
+/// [`AggregateSnapshot`](crate::snapshot::AggregateSnapshot).
+///
+/// The engine holds it only as `dyn ExtensionSnapshot`; the extension's consumer
+/// downcasts via [`as_any`](ExtensionSnapshot::as_any) to its OWN concrete
+/// snapshot type to read the tables. `Send + Sync` (the aggregate snapshot is
+/// shared across the actor's read/write threads) and `'static` via the `Any`
+/// supertrait, so the public crate never names a consumer table.
+pub trait ExtensionSnapshot: std::any::Any + Send + Sync {
+    /// Upcast to `dyn Any` so a consumer can `downcast_ref` to its concrete
+    /// snapshot type. Implementors return `self`.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// A decoded extension command carried inside
