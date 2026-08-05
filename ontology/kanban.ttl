@@ -246,6 +246,97 @@ kb:hasMember a owl:ObjectProperty ;
     rdfs:label "hasMember" ;
     rdfs:comment "the target is a member of this grouping (derived inverse of partOf; stored one way only)" .
 
+# ── EX-7098: proposals join the graph ───────────────────────────────────────
+# A proposal's link to the work item it closes was, until now, recoverable only by
+# MATCHING TEXT — and our prose cites ids by design (the citation rule, CH-6369), so
+# every such matcher confused a CITATION for the subject. Measured live: PROP-3926 was
+# reported as closing CH-6768 (a citation) rather than CH-7057; PROP-3924 as EX-6807
+# rather than EX-6983. The sweep that reads it ends its instruction with "+ close".
+#
+# Domain/range are kb:Item (= ANY) rather than a Proposal class, DELIBERATELY: the
+# guard `every_ttl_domain_and_range_names_a_real_item_type` requires every constraint
+# to name a registered ItemType, and Proposal is not one — it has its own namespace,
+# lifecycle and store. Admitting it properly is EX-7101 (kanban-v3), which then
+# TIGHTENS these two to Proposal→Item. Until then this is an honest any→any edge, and
+# the relations table already accepts a PROP- source_id (source_id/target_id are plain
+# Utf8, schema.rs:113-126) — so this needs no schema change.
+
+kb:closes a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:closedBy ;
+    rdfs:label "closes" ;
+    rdfs:comment "this proposal closes the target work item; recorded as an EDGE so no tool has to recover it by matching text (EX-7098). Only ONE direction is stored" .
+
+kb:closedBy a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:closes ;
+    rdfs:label "closedBy" ;
+    rdfs:comment "the target proposal closes this item (derived inverse of closes; stored one way only)" .
+
+# CH-7173: the supersession pair. Same any→any posture (and the same EX-7101 caveat)
+# as closes/closedBy directly above: the motivating case is PROP-supersedes-PROP, and
+# a Proposal is not a registered ItemType until kanban-v3. Producers: `nk move …
+# --resolution superseded --superseded-by <ID>` and `nk pr close … --superseded-by`
+# (both write the supersededBy direction; one direction stored, the inverse derived).
+kb:supersedes a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:supersededBy ;
+    rdfs:label "supersedes" ;
+    rdfs:comment "this item/proposal REPLACES the target; the live one in a duplicate pair. Stored one way only (the producer writes supersededBy)" .
+
+kb:supersededBy a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:supersedes ;
+    rdfs:label "supersededBy" ;
+    rdfs:comment "this item/proposal was REPLACED by the target (CH-7173: --resolution superseded requires naming it, so 'what replaced this?' is an edge, never prose)" .
+
+# ── CH-7163: DECISION / OBLIGATION EDGES (the remainder + ruling pairs) ───────────────
+# Same root cause as `closes` above and `supersedes` below: a relationship existed
+# conceptually but was stored as PROSE, so something had to grep for it — and the grep
+# could not tell a SUBJECT from a CITATION, while the citation rule (CH-6369) REQUIRES
+# citing ids in prose.
+#
+# THE DISCRIMINATOR (CH-7053's, generalised): does the fact SURVIVE the lifecycle?
+#   survives -> EDGE (a ruling is true forever; a remainder outlives its PROP)
+#   dies with the interaction -> FIELD (a review CLAIM is transient — deliberately NOT
+#   modelled here; CH-7107 owns it, and an edge there would accumulate garbage)
+#
+# Domain/range are kb:Item (= ANY) for the same reason `closes` and `supersedes` are, not
+# by oversight: `every_ttl_domain_and_range_names_a_real_item_type` requires a registered
+# ItemType and Proposal is not one. EX-7101 (kanban-v3) tightens these when it is.
+
+kb:leavesRemainder a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:remainderOf ;
+    rdfs:label "leavesRemainder" ;
+    rdfs:comment "this proposal is a PARTIAL pass and the target item carries its outstanding scope. Seeded by the server from the `completes-item:` line at pr.create/pr.edit — so a SEEDED edge is a scraped guess, not an assertion; a human's `remainderOf` (the only direction nk update accepts) is the asserted one. Only ONE direction is stored" .
+
+kb:remainderOf a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:leavesRemainder ;
+    rdfs:comment "inverse of leavesRemainder: this item carries the outstanding scope of the target partial proposal. This is the direction a HUMAN writes, because nk update resolves its subject through the item store and a proposal is not in it" ;
+    rdfs:label "remainderOf" .
+
+kb:ruledBy a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:scopes ;
+    rdfs:label "ruledBy" ;
+    rdfs:comment "this item's scope was set by the target ruling signal. Makes ruling provenance queryable instead of prose in a comment — the shape that let PROP-3955 delete a public module citing a ruling with no durable record (SG-7161). Producer: CH-7172. Only ONE direction is stored" .
+
+kb:scopes a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:ruledBy ;
+    rdfs:label "scopes" ;
+    rdfs:comment "inverse of ruledBy: this ruling sets the scope of the target item" .
+
 kb:implements a owl:ObjectProperty ;
     rdfs:domain kb:Expedition ;
     rdfs:range kb:Voyage ;

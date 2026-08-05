@@ -778,6 +778,52 @@ mod tests {
         assert_eq!(flat_column_for("hasMember"), None);
     }
 
+    /// CH-7273 (fleet regression): the four DECISION/OBLIGATION pairs — closes/closedBy,
+    /// supersedes/supersededBy, leavesRemainder/remainderOf, ruledBy/scopes — exist ONLY
+    /// in `kanban.ttl`, not in the compiled fallback, yet validate, look up, and
+    /// inverse-resolve exactly like the compiled set. Same acceptance shape as
+    /// `partof_membership_pair_is_loaded_from_data_only`, because it guards the same
+    /// property: the vocabulary grows by editing DATA. Pinned per CH-6659 — this test
+    /// goes RED when the .ttl blocks are removed, so a green pre-existing suite can
+    /// never again read as "the predicates loaded" while they did not.
+    #[test]
+    fn decision_obligation_pairs_are_loaded_from_data_only() {
+        let pairs = [
+            ("closes", "closedBy"),
+            ("supersedes", "supersededBy"),
+            ("leavesRemainder", "remainderOf"),
+            ("ruledBy", "scopes"),
+        ];
+        for (fwd, inv) in pairs {
+            for name in [fwd, inv] {
+                assert!(
+                    FALLBACK_PREDICATES.iter().all(|p| p.name != name),
+                    "'{name}' must NOT be compiled in — it proves the .ttl is the source"
+                );
+            }
+            let p = lookup(fwd).unwrap_or_else(|| panic!("'{fwd}' not loaded from kanban.ttl"));
+            assert_eq!(p.domain, &[] as &[&str], "'{fwd}' is any -> any (kb:Item)");
+            assert_eq!(p.range, &[] as &[&str]);
+            assert_eq!(p.inverse, Some(inv), "'{fwd}' names its inverse");
+            let q = lookup(inv).unwrap_or_else(|| panic!("'{inv}' not loaded from kanban.ttl"));
+            assert_eq!(q.inverse, Some(fwd), "'{inv}' points back at '{fwd}'");
+        }
+        // A decision edge validates end-to-end, including a proposal-shaped source id the
+        // item store cannot resolve (relations rows are plain Utf8; PROP- is a valid
+        // source). The source TYPE is unresolvable for a proposal, so validation runs
+        // with the neutral any-type posture the kb:Item domain grants.
+        assert!(validate_edge("closes", "PROP-1", "chore", "CH-2", Some("chore")).is_ok());
+        assert!(validate_edge("remainderOf", "CH-3", "chore", "PROP-1", None).is_ok());
+        // Loading MORE never opened the vocabulary.
+        assert!(validate_edge("closesish", "PROP-1", "chore", "CH-2", None).is_err());
+        // No flat-column projection for any of the eight — consumers traverse the
+        // typed edges (same posture as partOf/hasMember).
+        for (fwd, inv) in pairs {
+            assert_eq!(flat_column_for(fwd), None);
+            assert_eq!(flat_column_for(inv), None);
+        }
+    }
+
     /// The live vocabulary IS the .ttl-loaded one (not the fallback): the loader
     /// succeeded on the embedded file, so `predicates()` must expose a set identical to
     /// a fresh parse (i.e. the fallback never silently took over).
