@@ -266,17 +266,36 @@ pub fn compute_critical_path(items: &[ItemInfo]) -> Result<CriticalPathResult, S
 
     // Compute downstream (transitive dependent) count
     let mut downstream_count: HashMap<String, usize> = HashMap::new();
+    // The reachable SET per node, memoised alongside the count (CH-6992/CH-7154).
+    // Kept separate from `downstream_count` so the public shape is unchanged.
+    let mut downstream_set: HashMap<String, HashSet<String>> = HashMap::new();
     // Process in reverse topological order
     for id in ordered.iter().rev() {
-        let count = if let Some(dependents) = adj.get(id.as_str()) {
-            dependents
-                .iter()
-                .map(|&d| 1 + downstream_count.get(d).copied().unwrap_or(0))
-                .sum()
-        } else {
-            0
-        };
-        downstream_count.insert(id.clone(), count);
+        // The CARDINALITY OF THE REACHABLE SET, not a sum over paths.
+        //
+        // This was `dependents.map(|d| 1 + downstream_count[d]).sum()`, which counts
+        // any node reachable by more than one path ONCE PER PATH — every diamond in
+        // the DAG, compounding with depth (a live board measured 108 reported vs 19
+        // true, 5.7x). The count is what the Bottlenecks block shows, i.e. what a
+        // reader uses to decide what to work on next — so a leverage score built on
+        // it laundered an arithmetic artifact into a priority claim.
+        //
+        // Memoised in reverse-topological order exactly as before: when `id` is
+        // processed every dependent's set is already final, so each node is visited
+        // once. The sets cost memory the counts did not — the deliberate trade: a
+        // correct count needs to know WHICH nodes are reachable, not how many times
+        // they were touched.
+        let mut set: HashSet<String> = HashSet::new();
+        if let Some(dependents) = adj.get(id.as_str()) {
+            for &d in dependents {
+                set.insert(d.to_string());
+                if let Some(reachable) = downstream_set.get(d) {
+                    set.extend(reachable.iter().cloned());
+                }
+            }
+        }
+        downstream_count.insert(id.clone(), set.len());
+        downstream_set.insert(id.clone(), set);
     }
 
     // Find longest path (critical path) by backtracking from deepest node
@@ -1371,10 +1390,51 @@ mod tests {
         let items = make_items();
         let cp = compute_critical_path(&items).unwrap();
 
-        // EX-1 -> EX-3, EX-4 -> EX-5 (3 transitive)
-        assert!(cp.downstream_count["EX-1"] >= 3);
+        // EX-1 -> {EX-3, EX-4} -> EX-5: the reachable SET is exactly 3. This was
+        // `>= 3`, which the path-sum bug also satisfied (it reported 4 — EX-5
+        // counted once per path); an exact bound is what makes the count a fact.
+        assert_eq!(cp.downstream_count["EX-1"], 3);
         // EX-5 has no dependents
         assert_eq!(cp.downstream_count["EX-5"], 0);
+    }
+
+    /// The CH-6992 defect, upstream (fleet item CH-7154): `downstream_count`
+    /// summed over PATHS, so any node reachable more than one way counted once
+    /// per path — every diamond inflated, compounding with depth (measured on a
+    /// live board: 108 reported vs 19 true, 5.7x). The count must be the
+    /// CARDINALITY OF THE REACHABLE SET.
+    #[test]
+    fn test_downstream_count_diamond_counts_the_set_not_the_paths() {
+        let mk = |id: &str, deps: Vec<&str>| ItemInfo {
+            id: id.into(),
+            title: id.into(),
+            item_type: "expedition".into(),
+            status: "backlog".into(),
+            priority: "high".into(),
+            assignee: "-".into(),
+            related: vec![],
+            depends_on: deps.into_iter().map(String::from).collect(),
+            rank: None,
+        };
+        // D depends on B and C; B and C each depend on A.
+        let items = vec![
+            mk("A", vec![]),
+            mk("B", vec!["A"]),
+            mk("C", vec!["A"]),
+            mk("D", vec!["B", "C"]),
+        ];
+        let cp = compute_critical_path(&items).unwrap();
+
+        assert_eq!(
+            cp.downstream_count["A"], 3,
+            "A's reachable set is {{B, C, D}} = 3. Summing over paths yields 4 because D is \
+             reachable via both B and C — that double-count is the defect."
+        );
+        // The shoulders: each mid-node reaches only D.
+        assert_eq!(cp.downstream_count["B"], 1);
+        assert_eq!(cp.downstream_count["C"], 1);
+        // The sink reaches nothing — guards against a fix that inflates every node.
+        assert_eq!(cp.downstream_count["D"], 0);
     }
 
     #[test]
