@@ -100,7 +100,7 @@
   "relation.add|valid": "{\"predicate\":\"related\",\"relation_id\":\"<uuid>\",\"source\":\"EX-1\",\"target\":\"EX-2\"}",
   "relation.query|empty": "{\"error\":\"Invalid JSON: missing field `item_id` at line 1 column 2\",\"code\":\"INVALID_PAYLOAD\"}",
   "relation.query|malformed": "{\"error\":\"Invalid JSON: key must be a string at line 1 column 3\",\"code\":\"INVALID_PAYLOAD\"}",
-  "relation.query|valid": "{\"count\":0,\"item_id\":\"EX-1\"}",
+  "relation.query|valid": "{\"count\":0,\"item_id\":\"EX-1\",\"relations\":[]}",
   "roadmap|empty": "{\"view\":\"No items found.\\n\"}",
   "roadmap|malformed": "{\"error\":\"Invalid JSON: key must be a string at line 1 column 3\",\"code\":\"INVALID_PAYLOAD\"}",
   "roadmap|valid": "{\"view\":\"No items found.\\n\"}",

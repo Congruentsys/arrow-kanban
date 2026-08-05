@@ -40,10 +40,53 @@ pub(crate) fn handle_relation_query_typed(
     req: RelationQueryRequest,
     relations: &RelationsStore,
 ) -> Result<KanbanReply, Vec<u8>> {
+    // Issue #26: return THE EDGES, not a tally. A bare count is compatible with
+    // an edge to anything, of any kind — the agent that just wrote an edge could
+    // not confirm what it wrote (and burned 4 turns trying). `count` stays for
+    // existing consumers.
     let results = relations.query_relations(&req.item_id);
+    let edges: Vec<serde_json::Value> = results.iter().flat_map(relation_rows).collect();
 
     Ok(KanbanReply::Value(serde_json::json!({
         "item_id": req.item_id,
-        "count": results.iter().map(|b| b.num_rows()).sum::<usize>(),
+        "count": edges.len(),
+        "relations": edges,
     })))
+}
+
+/// The non-deleted rows of a relations batch as `{relation_id, source, target, predicate}`.
+/// (`query_relations` already filters deleted rows and slices per-hit, but reading the
+/// flag here keeps this correct for any caller handing in a raw batch.)
+fn relation_rows(batch: &arrow::array::RecordBatch) -> Vec<serde_json::Value> {
+    use arrow::array::{Array, BooleanArray, StringArray};
+    use arrow_kanban::schema::rel_col;
+    let col = |i: usize| {
+        batch
+            .column(i)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("relations string column")
+    };
+    let (ids, sources, targets, predicates) = (
+        col(rel_col::RELATION_ID),
+        col(rel_col::SOURCE_ID),
+        col(rel_col::TARGET_ID),
+        col(rel_col::PREDICATE),
+    );
+    let deleted = batch
+        .column(rel_col::DELETED)
+        .as_any()
+        .downcast_ref::<BooleanArray>()
+        .expect("deleted column");
+    (0..batch.num_rows())
+        .filter(|&i| !deleted.value(i))
+        .map(|i| {
+            serde_json::json!({
+                "relation_id": ids.value(i),
+                "source": sources.value(i),
+                "target": targets.value(i),
+                "predicate": predicates.value(i),
+            })
+        })
+        .collect()
 }
