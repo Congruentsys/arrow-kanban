@@ -629,9 +629,30 @@ pub(crate) fn handle_list_typed(
     }
 
     let table = display::format_item_table(&items);
+    // #28: structured rows ALONGSIDE the rendered table. `table` is a rendering —
+    // a wire consumer that needs the data has nothing to parse without this, and
+    // fails only at runtime ("missing 'items' field") while compiling clean.
+    // `export_json` is the same serializer the `export` verb uses, so field names
+    // stay one convention and an id is its own field, never something a caller
+    // scrapes out of a rendered line. Bodies are large and `list` is a row
+    // surface: strip `body` per row; `show`/`export` are the body surfaces.
+    let items_rows: Vec<serde_json::Value> =
+        serde_json::from_str::<serde_json::Value>(&export::export_json(&items))
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut row| {
+                if let Some(obj) = row.as_object_mut() {
+                    obj.remove("body");
+                }
+                row
+            })
+            .collect();
     Ok(KanbanReply::Value(serde_json::json!({
         "count": items.iter().map(|b| b.num_rows()).sum::<usize>(),
         "table": table,
+        "items": items_rows,
     })))
 }
 
