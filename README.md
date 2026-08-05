@@ -106,6 +106,88 @@ A board lives in `./.arrow-kanban/`:
   _commits.json        # graph-native commit log (audit trail)
 ```
 
+## Arrow compatibility policy
+
+**This crate hands `RecordBatch` values across its API boundary, so its Arrow major version is
+part of its public contract.** An in-process consumer linking a different Arrow major gets
+type-mismatch errors at compile or link time, not at runtime — and the failure names Arrow
+internals rather than this crate.
+
+| | |
+|---|---|
+| Arrow major | **57** (`arrow = "57"`, root and `arrow-kanban-server`) |
+| Bump policy | an Arrow **major** bump is a **breaking change** for in-process consumers and is released as a minor version bump of this crate while pre-1.0 |
+| Not affected | consumers using **only** the CLI or the NATS wire protocol — those exchange JSON, not `RecordBatch` |
+
+If you embed the library, pin the same Arrow major. If you drive it over NATS or the CLI, you do
+not need to care.
+
+## Extension points
+
+The engine is generic; the domain lives outside it. Five public traits are the seams:
+
+| trait | where | what it lets you do |
+|---|---|---|
+| `EngineExtension` | `server/src/extension.rs` | add your own commands — the engine routes an unrecognised verb to the extension before refusing it |
+| `ExtensionSnapshot` | `server/src/extension.rs` | give your extension's state a snapshot/restore path, so it survives restart with the core |
+| `StorageBackend` | `server/src/storage.rs` | replace the durable substrate; this is the commit point and the transactional-outbox source |
+| `WriterLease` | `server/src/lease.rs` | supply your own single-writer fencing |
+| `ReplicaSource` | `server/src/replica.rs` | feed a read replica from something other than the local filesystem |
+
+**Worked example:** NuSy composes this crate with its own private organs through
+`EngineExtension` — a composite extension multiplexing the engine's single extension slot across
+several namespaced sub-extensions, over a custom `StorageBackend`. Nothing in that arrangement is
+privileged; it is the documented seam used as intended.
+
+## Durability and consistency contract
+
+What is guaranteed, and where to read it:
+
+- **Commit point + transactional outbox.** `StorageBackend` is *"the durable storage boundary —
+  the commit point + transactional outbox source"* (`server/src/storage.rs`). `committed_seq()`
+  is the outbox relay's source and re-derives the unpublished tail after a crash, so a crash
+  between commit and publish does not lose an event.
+- **Single-writer fencing.** `WriterLease` (`server/src/lease.rs`); pinned by
+  `server/tests/lease_fencing_acceptance.rs`.
+- **Replica gap detection, fail-closed.** A replica's tail must be contiguous; a hole yields
+  `ReplicaError::Gap { expected, found }` rather than a silently short board
+  (`server/src/replica.rs`). Pinned by `server/tests/replica_gap_acceptance.rs`.
+- **Declared staleness bound.** `StalenessBound { max_staleness, max_lag_seqs }`
+  (`server/src/replica.rs`) — a time bound, optionally with a position ceiling. A replica past
+  its bound **refuses reads** rather than answering stale ones; confirmation is a currency probe
+  that either shows it level with the source or lets it catch up.
+
+## Conformance fixtures — run them against your own integration
+
+These exist to be executed by consumers, not only by this repo's CI. They are the evidence that
+the local, server and in-process paths share identical core semantics:
+
+```bash
+cargo test -p arrow-kanban-server --test spec08_conformance          # the core semantic contract
+cargo test -p arrow-kanban-server --test lease_fencing_acceptance    # single-writer fencing
+cargo test -p arrow-kanban-server --test outbox_atomicity_acceptance # commit/publish atomicity
+cargo test -p arrow-kanban-server --test replica_gap_acceptance      # fail-closed gap detection
+cargo test -p arrow-kanban-server --test write_durability_acceptance # survives restart
+cargo test -p arrow-kanban-server --test backward_compat_acceptance  # older stores still load
+cargo test -p arrow-kanban-server --test structural_core_only_acceptance # no domain in the core
+```
+
+If you implement `StorageBackend` or `EngineExtension`, the persistence and write-path batteries
+(`extension_persistence_acceptance`, `extension_writepath_acceptance`) are the ones to point at
+your implementation.
+
+## What this crate deliberately does NOT do
+
+Stated so you can tell what you still have to build:
+
+- **No agenda authority.** It stores and serves work items; deciding what an agent should do next
+  is not its job.
+- **No promotion or governance policy.** There is no notion of a claim being validated, ratified,
+  or promoted between confidence levels.
+- **No domain model.** The core is domain-zero by design — `structural_core_only_acceptance`
+  exists to keep it that way. Your vocabulary goes in an extension, not in the engine.
+- **No opinion about who may write.** `WriterLease` gives you fencing; the policy is yours.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
