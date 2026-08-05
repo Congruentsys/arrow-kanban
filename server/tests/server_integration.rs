@@ -1788,3 +1788,52 @@ fn a_non_projecting_predicate_does_not_touch_the_flat_columns() {
         "`implements` must not leak into related: {shown}"
     );
 }
+
+// ─── #28: list carries structured `items` alongside the rendered `table` ────
+//
+// `table` is a RENDERING. A wire consumer that needs the data (not the drawing)
+// had nothing to parse: it compiled clean and failed only at runtime with
+// "missing 'items' field". These pin the structured rows: same serializer as the
+// `export` verb (one field-name convention; an id is its own field, never a
+// substring of a rendered line), with `body` stripped per row — `list` is a row
+// surface, `show`/`export` are the body surfaces.
+
+#[test]
+fn list_reply_carries_structured_items() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut state = test_state(dir.path());
+
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "title": "structured row item",
+        "item_type": "chore",
+        "body": "a body that must NOT appear in list rows",
+    }))
+    .unwrap();
+    let created: serde_json::Value =
+        serde_json::from_slice(&dispatch("kanban.cmd.create", &payload, &mut state)).unwrap();
+    let id = created["id"].as_str().expect("created id");
+
+    let list: serde_json::Value = serde_json::from_slice(&dispatch(
+        "kanban.cmd.list",
+        &serde_json::to_vec(&serde_json::json!({})).unwrap(),
+        &mut state,
+    ))
+    .unwrap();
+
+    assert!(list["table"].is_string(), "the rendered table stays");
+    let rows = list["items"].as_array().expect("structured `items` rows");
+    let row = rows
+        .iter()
+        .find(|r| r["id"].as_str() == Some(id))
+        .expect("the created item appears as a structured row, id as its OWN field");
+    assert_eq!(row["title"].as_str(), Some("structured row item"));
+    assert!(
+        row.get("body").is_none(),
+        "list is a row surface — body must be stripped: {row}"
+    );
+    assert_eq!(
+        list["count"].as_u64().map(|c| c as usize),
+        Some(rows.len()),
+        "count and the structured rows must agree"
+    );
+}
