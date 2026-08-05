@@ -1,30 +1,45 @@
 # arrow-kanban
 
-An **Arrow-native, graph-native kanban engine**. Work items live in Apache Arrow
-tables persisted to Parquet — not in a pile of markdown files — so the board is
-columnar, queryable, and cheap to snapshot. Items are validated against **SHACL
-shapes**, organized across **dual boards** (a development board and a research
-board), and linked with **typed, directional relationships** so the dependency
-graph is machine-queryable.
+An **Arrow-native work-graph engine**: work items, their typed relationships, and their
+history live in Apache Arrow tables persisted to Parquet — not in a pile of markdown files —
+so the board is columnar, queryable, and durable by construction. It runs as a local library,
+as a single-writer NATS server, or in-process, and the three share one proven semantics.
 
-- **Arrow/Parquet storage** — items, relations, comments, and runs are Arrow
-  `RecordBatch`es written atomically to Parquet, with a graph-native commit log.
-- **SHACL-validated shapes** — every item type has a shape (`ontology/shapes/`);
-  `arrow-kanban validate` checks conformance and can suggest fixes.
-- **Dual boards** — `development` (expeditions, chores, voyages, …) and
-  `research` (papers, hypotheses, experiments, measures, ideas, literature),
-  each with its own per-type lifecycle.
-- **Typed relationships** — `dependsOn`, `blocks`, `implements`, `validates`,
-  `measures`, `partOf`, … (defined in `ontology/kanban.ttl`), so you can ask
-  *which experiment validates this hypothesis?* without reading prose.
-- **Planning views** — roadmap, critical-path, worklist, blocked, and stats,
-  computed over the dependency graph.
-- **Local by default** — no network dependencies. An optional `client` feature
-  adds NATS multi-agent collaboration.
+If you need a work tracker whose data you can *query* rather than scrape, whose durability is a
+tested contract rather than a hope, and whose vocabulary you extend by editing data rather than
+forking code — keep reading.
 
-## Requirements
+## Why arrow-kanban
 
-A Rust toolchain supporting **edition 2024** (Rust 1.85 or newer).
+A kanban CRUD is not interesting. These are the things this engine does that most don't:
+
+- **Arrow-native, end to end.** Items, relations, comments, and status history are Arrow
+  `RecordBatch`es written atomically to Parquet, with a graph-native commit log. Analysis is a
+  columnar query, not an export step.
+- **Durable by construction, and it is a *tested* contract.** A commit point plus a
+  transactional outbox, single-writer fencing, fail-closed replica gap detection, and a declared
+  staleness bound — each pinned by an acceptance battery you can run yourself
+  ([Durability and consistency contract](#durability-and-consistency-contract)).
+- **Data-driven vocabulary.** Item types, lifecycles, WIP policy, and the typed-relationship
+  vocabulary load from a `.ttl` (`ontology/kanban.ttl`). **A new relationship is a data edit, not
+  a code change** — add an `owl:ObjectProperty` with its domain, range, and inverse and the CLI
+  accepts it on the next run.
+- **Typed, directional relationships.** `dependsOn`, `blocks`, `implements`, `validates`,
+  `measures`, `partOf`, … so you can ask *which experiment validates this hypothesis?* without
+  parsing prose — while the flat dependency columns planning views need are kept as a projection
+  of the same edges.
+- **Three deployment shapes, one semantics.** Local, NATS server, and in-process embedding share
+  identical core behaviour, and that is not a claim — it is
+  [conformance fixtures](#conformance-fixtures--run-them-against-your-own-integration) you can
+  execute against your own integration.
+- **Built to be extended.** Five public traits are the seams for commands, storage, fencing,
+  replication, and snapshotting ([Extension points](#extension-points)); the core stays
+  domain-zero, enforced by a test.
+
+**What it deliberately is *not*:** an agenda authority, a governance/promotion policy, or a domain
+model. It stores and serves work items; deciding what an item *means* or who may write is the
+consumer's job — which is exactly why the engine is generic. See
+[What this crate deliberately does NOT do](#what-this-crate-deliberately-does-not-do).
 
 ## Install
 
@@ -36,34 +51,32 @@ cargo install --path .
 cargo install --git https://github.com/hankh95/arrow-kanban
 ```
 
-This installs the `arrow-kanban` binary.
+Requires a Rust toolchain supporting **edition 2024** (Rust 1.85 or newer). This installs the
+`arrow-kanban` binary. The default build has no network dependencies at all.
 
 ## Quickstart
 
 ```bash
-# Initialize a board in the current directory (creates ./.arrow-kanban/)
-arrow-kanban init
+# Initialize a board in the current directory (creates ./.arrow-kanban/).
+# Themes are presets for the type/lifecycle vocabulary: `nautical`, `software`, or `hdd`.
+arrow-kanban init --theme software
 
-# Create an item
-arrow-kanban create expedition "Wire up the ingest pipeline"
+# Create an item, move it along, inspect it (`create` prints the new item's id)
+arrow-kanban create feature "Wire up the ingest pipeline"
+arrow-kanban move FT-1300 in_progress --assign "alice"
+arrow-kanban show FT-1300
 
-# See the board
-arrow-kanban board
-
-# Move it along
-arrow-kanban move EX-1300 in_progress --assign "alice"
-
-# Query and inspect
+# Query and plan over the dependency graph
 arrow-kanban list --status in_progress
-arrow-kanban show EX-1300
-arrow-kanban query "in-progress expeditions"
+arrow-kanban query "in-progress features"
+arrow-kanban roadmap
 
-# Validate against SHACL shapes
+# Validate against the SHACL shapes
 arrow-kanban validate --all
 ```
 
-Run `arrow-kanban --help` (or `arrow-kanban <command> --help`) for the full
-command list. Highlights:
+Run `arrow-kanban --help` (or `arrow-kanban <command> --help`) for the full command list.
+Highlights:
 
 | Command | What it does |
 |---------|--------------|
@@ -81,16 +94,14 @@ command list. Highlights:
 
 ## NATS multi-agent mode (optional)
 
-Build with the `client` feature to talk to a NATS server so multiple agents can
-collaborate on one board with single-writer semantics:
+Build with the `client` feature to talk to a NATS server so multiple agents can collaborate on
+one board with single-writer semantics:
 
 ```bash
 cargo build --features client
 arrow-kanban --server nats://localhost:4222 board
 arrow-kanban mcp-server   # expose the board over the Model Context Protocol (stdio)
 ```
-
-The default build has no network dependencies at all.
 
 ## Storage layout
 
@@ -134,10 +145,9 @@ The engine is generic; the domain lives outside it. Five public traits are the s
 | `WriterLease` | `server/src/lease.rs` | supply your own single-writer fencing |
 | `ReplicaSource` | `server/src/replica.rs` | feed a read replica from something other than the local filesystem |
 
-**Worked example:** NuSy composes this crate with its own private organs through
-`EngineExtension` — a composite extension multiplexing the engine's single extension slot across
-several namespaced sub-extensions, over a custom `StorageBackend`. Nothing in that arrangement is
-privileged; it is the documented seam used as intended.
+**Worked example:** a composite `EngineExtension` can multiplex the engine's single extension slot
+across several namespaced sub-extensions over a custom `StorageBackend`. Nothing in that
+arrangement is privileged; it is the documented seam used as intended.
 
 ## Durability and consistency contract
 
