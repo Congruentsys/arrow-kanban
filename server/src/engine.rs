@@ -860,7 +860,7 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
             C::Comment(req) => core::handle_comment_typed(req, &mut self.store),
             C::Rank(req) => core::handle_rank_typed(req, &mut self.store),
             C::List(req) => core::handle_list_typed(req, &self.store),
-            C::Show(req) => core::handle_show_typed(req, &self.store),
+            C::Show(req) => core::handle_show_typed(req, &self.store, &self.relations),
             C::Query => Ok(KanbanReply::error(
                 "query cross-searches proposals, which are not part of the open kanban engine",
                 "UNSUPPORTED",

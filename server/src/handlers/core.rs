@@ -646,6 +646,7 @@ pub struct ShowRequest {
 pub(crate) fn handle_show_typed(
     req: ShowRequest,
     store: &KanbanStore,
+    relations: &RelationsStore,
 ) -> Result<KanbanReply, Vec<u8>> {
     let item = store
         .get_item(&req.id)
@@ -675,6 +676,12 @@ pub(crate) fn handle_show_typed(
         }
         _ => {
             let mut detail = display::format_item_detail(&item);
+            // Issue #26: the typed edges RENDER — `show` is the obvious verification
+            // command, and it omitted relations entirely (an agent that had just
+            // written an edge could not see it). Direction is spelled out per line;
+            // the section is absent when there are no edges (a header over nothing
+            // reads as a bug).
+            detail.push_str(&format_edges(&req.id, relations));
             let item_comments = store.list_comments(&req.id);
             if !item_comments.is_empty() {
                 detail.push_str(&arrow_kanban::comments::format_comments(&item_comments));
@@ -685,6 +692,53 @@ pub(crate) fn handle_show_typed(
             })))
         }
     }
+}
+
+/// The typed-edges section for `show` (issue #26). Outgoing then incoming, each
+/// line naming the predicate and the far end; empty string when the item has no
+/// edges, so an edge-free show stays byte-stable.
+fn format_edges(item_id: &str, relations: &RelationsStore) -> String {
+    use arrow::array::{Array, BooleanArray, StringArray};
+    use arrow_kanban::schema::rel_col;
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut in_lines: Vec<String> = Vec::new();
+    for batch in relations.query_relations(item_id) {
+        let col = |i: usize| {
+            batch
+                .column(i)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("relations string column")
+                .value(0)
+                .to_string()
+        };
+        let deleted = batch
+            .column(rel_col::DELETED)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .expect("deleted column");
+        if batch.num_rows() != 1 || deleted.value(0) {
+            continue;
+        }
+        let (source, target, predicate) = (
+            col(rel_col::SOURCE_ID),
+            col(rel_col::TARGET_ID),
+            col(rel_col::PREDICATE),
+        );
+        if source == item_id {
+            out_lines.push(format!("    {predicate} -> {target}\n"));
+        } else {
+            in_lines.push(format!("    {source} -> {predicate} -> (this)\n"));
+        }
+    }
+    if out_lines.is_empty() && in_lines.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from("\n  Edges\n");
+    for l in out_lines.into_iter().chain(in_lines) {
+        s.push_str(&l);
+    }
+    s
 }
 
 // ── Board ───────────────────────────────────────────────────────────────────
