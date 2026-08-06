@@ -165,6 +165,7 @@ pub enum MutationEvent {
     Commented(CommentedEvent),
     Ranked(RankedEvent),
     RelationAdded(RelationAddedEvent),
+    RelationRemoved(RelationRemovedEvent),
     #[cfg(feature = "research")]
     RunStarted(RunEvent),
     #[cfg(feature = "research")]
@@ -264,6 +265,15 @@ pub struct RankedEvent {
 /// Replay-complete record of a typed-relation add.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelationAddedEvent {
+    pub source: String,
+    pub target: String,
+    pub predicate: String,
+}
+
+/// Replay-complete record of a typed-relation REMOVE (CH-7319 — the deletion
+/// half `relation.add` shipped without).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelationRemovedEvent {
     pub source: String,
     pub target: String,
     pub predicate: String,
@@ -430,6 +440,14 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 predicate: ostr(&q, "predicate").or_else(|| ostr(&rv, "predicate"))?,
             }))
         }
+        C::RelationRemove(req) => {
+            let q = serde_json::to_value(req).ok()?;
+            Some(MutationEvent::RelationRemoved(RelationRemovedEvent {
+                source: ostr(&q, "source_id").or_else(|| ostr(&rv, "source"))?,
+                target: ostr(&q, "target_id").or_else(|| ostr(&rv, "target"))?,
+                predicate: ostr(&q, "predicate").or_else(|| ostr(&rv, "predicate"))?,
+            }))
+        }
         #[cfg(feature = "research")]
         C::HddRun(_) => Some(MutationEvent::RunStarted(RunEvent {
             experiment_id: ostr(&rv, "experiment_id")?,
@@ -490,6 +508,7 @@ impl MutationEvent {
             MutationEvent::Commented(_) => "commented",
             MutationEvent::Ranked(_) => "ranked",
             MutationEvent::RelationAdded(_) => "relation_added",
+            MutationEvent::RelationRemoved(_) => "relation_removed",
             #[cfg(feature = "research")]
             MutationEvent::RunStarted(_) => "run_started",
             #[cfg(feature = "research")]
@@ -586,6 +605,9 @@ impl MutationEvent {
             }),
             MutationEvent::Ranked(e) => serde_json::json!({ "id": e.id, "rank": e.rank }),
             MutationEvent::RelationAdded(e) => serde_json::json!({
+                "source": e.source, "target": e.target, "predicate": e.predicate,
+            }),
+            MutationEvent::RelationRemoved(e) => serde_json::json!({
                 "source": e.source, "target": e.target, "predicate": e.predicate,
             }),
             #[cfg(feature = "research")]
@@ -762,6 +784,19 @@ impl MutationEvent {
                     .add_relation(&e.source, &e.target, &e.predicate)
                     .map(|_| ())
                     .map_err(|err| format!("replay relation.add {}->{}: {err}", e.source, e.target))
+            }
+            // Idempotent in the same way: an already-absent edge is the replayed
+            // outcome, not an error (the trailing checkpoint may already carry it).
+            MutationEvent::RelationRemoved(e) => {
+                if !relations.has_relation(&e.source, &e.target, &e.predicate) {
+                    return Ok(());
+                }
+                relations
+                    .remove_relation(&e.source, &e.target, &e.predicate)
+                    .map(|_| ())
+                    .map_err(|err| {
+                        format!("replay relation.remove {}->{}: {err}", e.source, e.target)
+                    })
             }
             // The run store is persisted by the handler outside the item
             // checkpoint, so there is no item-store state to replay.

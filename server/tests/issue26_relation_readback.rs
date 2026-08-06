@@ -154,3 +154,95 @@ fn show_without_edges_stays_clean() {
         "no edges -> no edges section (a header over nothing reads as a bug): {detail}"
     );
 }
+
+/// CH-7319 — the deletion half: `relation.remove` deletes the exact triple, the
+/// removal is READABLE back (query shows it gone), and a nonexistent triple
+/// refuses rather than claiming success. The measured need: a false seeded
+/// PROP-sourced edge was undeletable through every prior surface.
+#[test]
+fn relation_remove_round_trip_and_refusal() {
+    let (_tmp, mut engine) = engine_with(&["CH-1", "CH-2"]);
+
+    let add = json(&engine.dispatch(
+        "relation.add",
+        br#"{"source_id":"PROP-9001","target_id":"CH-1","predicate":"leavesRemainder"}"#,
+    ));
+    assert!(add.get("error").is_none(), "add failed: {add}");
+
+    // Remove the exact triple — the reply says what was removed.
+    let rm = json(&engine.dispatch(
+        "relation.remove",
+        br#"{"source_id":"PROP-9001","target_id":"CH-1","predicate":"leavesRemainder"}"#,
+    ));
+    assert!(rm.get("error").is_none(), "remove failed: {rm}");
+    assert_eq!(rm["removed"], true);
+    assert_eq!(rm["source"], "PROP-9001");
+
+    // Readable back: the edge is GONE from both endpoints' queries.
+    let q = json(&engine.dispatch("relation.query", br#"{"item_id":"CH-1"}"#));
+    assert_eq!(q["count"], 0, "edge must be gone: {q}");
+
+    // A nonexistent triple REFUSES — a remove that claims success on nothing
+    // is the false-green shape (the guarded-deleter lesson, CH-7310).
+    let rm2 = json(&engine.dispatch(
+        "relation.remove",
+        br#"{"source_id":"PROP-9001","target_id":"CH-1","predicate":"leavesRemainder"}"#,
+    ));
+    assert!(
+        rm2.get("error").is_some(),
+        "removing an absent edge must refuse: {rm2}"
+    );
+}
+
+/// CH-7319 durability: the removal survives an engine RELOAD from disk — the
+/// HZ-7179 lesson verbatim (an in-memory assertion cannot fail on a persistence
+/// defect, which is precisely why eleven passing tests once missed one).
+#[test]
+fn relation_remove_survives_reload() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let mut store = KanbanStore::new();
+    store
+        .create_item_with_id("CH-1", &input("one"))
+        .expect("seed");
+    arrow_kanban::persist::save_all(root, &store, &RelationsStore::new()).expect("save_all");
+
+    use arrow_kanban_server::storage::StorageBackend;
+    let mut backend = ParquetBackend::open(root).expect("open");
+    let (loaded, _seq) = backend.load().expect("load");
+    let mut engine = KanbanEngine::with_backend(
+        loaded.store,
+        loaded.relations,
+        root.to_path_buf(),
+        HealthGate::new(),
+        backend,
+    );
+    let add = json(&engine.dispatch(
+        "relation.add",
+        br#"{"source_id":"PROP-9001","target_id":"CH-1","predicate":"leavesRemainder"}"#,
+    ));
+    assert!(add.get("error").is_none(), "{add}");
+    let rm = json(&engine.dispatch(
+        "relation.remove",
+        br#"{"source_id":"PROP-9001","target_id":"CH-1","predicate":"leavesRemainder"}"#,
+    ));
+    assert!(rm.get("error").is_none(), "{rm}");
+    drop(engine);
+
+    // A FRESH engine from the same directory: the edge must STILL be gone.
+    let mut backend2 = ParquetBackend::open(root).expect("reopen");
+    let (loaded2, _seq) = backend2.load().expect("reload");
+    let mut engine2 = KanbanEngine::with_backend(
+        loaded2.store,
+        loaded2.relations,
+        root.to_path_buf(),
+        HealthGate::new(),
+        backend2,
+    );
+    let q = json(&engine2.dispatch("relation.query", br#"{"item_id":"CH-1"}"#));
+    assert_eq!(
+        q["count"], 0,
+        "the removal must survive the reload — a resurrected edge is the \
+         HZ-7179 persistence-gap shape: {q}"
+    );
+}

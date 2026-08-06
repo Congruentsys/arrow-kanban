@@ -80,6 +80,9 @@ fn valid_payload(verb: &str) -> Vec<u8> {
         "relation.add" => {
             serde_json::json!({ "source_id": "EX-1", "target_id": "EX-2", "predicate": "related" })
         }
+        "relation.remove" => {
+            serde_json::json!({ "source_id": "EX-1", "target_id": "EX-2", "predicate": "related" })
+        }
         "relation.query" => serde_json::json!({ "item_id": "EX-1" }),
         "source.push" => serde_json::json!({ "branch": "b", "bundle_b64": "AAAA" }),
         "source.pull" | "source.delete" => serde_json::json!({ "branch": "b" }),
@@ -260,4 +263,20 @@ fn via_parse_apply_bytes(verb: &str, payload: &[u8]) -> Vec<u8> {
         Err(reply) => reply,
     }
     .into_bytes()
+}
+
+/// Capture helper (run manually with --ignored --nocapture) to print a NEW
+/// verb's three replies for pinning into codec_goldens.json.
+#[test]
+#[ignore = "golden capture helper, not an assertion"]
+fn capture_relation_remove_goldens() {
+    for (tag, payload) in payloads_for("relation.remove") {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut engine = fresh_engine(dir.path());
+        let live = via_dispatch(&mut engine, "relation.remove", &payload);
+        println!(
+            "GOLDEN relation.remove|{tag}: {}",
+            String::from_utf8_lossy(&live)
+        );
+    }
 }

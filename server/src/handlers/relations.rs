@@ -29,6 +29,37 @@ pub(crate) fn handle_relation_add_typed(
     })))
 }
 
+// ── Relation Remove (CH-7319) ───────────────────────────────────────────────
+//
+// The deletion half `relation.add` shipped without. Measured need: a FALSE
+// seeded edge (a pre-fix citation-scrape `leavesRemainder`) was UNDELETABLE
+// through every surface — `--unrelate` requires the edge's SOURCE as the
+// update subject (a proposal never is), and re-seeding replaces only with a
+// non-empty seed set. This verb is the general fix: exact-triple removal.
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RelationRemoveRequest {
+    source_id: String,
+    target_id: String,
+    predicate: String,
+}
+
+pub(crate) fn handle_relation_remove_typed(
+    req: RelationRemoveRequest,
+    relations: &mut RelationsStore,
+) -> Result<KanbanReply, Vec<u8>> {
+    relations
+        .remove_relation(&req.source_id, &req.target_id, &req.predicate)
+        .map_err(|e| error_response(&format!("{e}"), "RELATION_REMOVE_FAILED"))?;
+
+    Ok(KanbanReply::Value(serde_json::json!({
+        "removed": true,
+        "source": req.source_id,
+        "target": req.target_id,
+        "predicate": req.predicate,
+    })))
+}
+
 // ── Relation Query ──────────────────────────────────────────────────────────
 
 #[derive(Clone, Deserialize)]
