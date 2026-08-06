@@ -363,7 +363,7 @@ default_board: development
     // Verify batch building works
     let items_batch = result.items_batch().expect("items batch");
     assert_eq!(items_batch.num_rows(), 11);
-    assert_eq!(items_batch.num_columns(), 18);
+    assert_eq!(items_batch.num_columns(), 19);
 
     let runs_batch = result.runs_batch().expect("runs batch");
     assert_eq!(runs_batch.num_rows(), 2);

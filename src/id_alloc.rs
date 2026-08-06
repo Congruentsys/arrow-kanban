@@ -158,6 +158,7 @@ mod tests {
                     TimestampMillisecondArray::from(vec![None::<i64>; n]).with_timezone("UTC"),
                 ), // updated_at
                 Arc::new(arrow::array::Int32Array::from(vec![None::<i32>; n])), // priority_rank
+                Arc::new(arrow::array::Int32Array::from(vec![Some(0); n])), // attempt_count
             ],
         )
         .expect("should create batch")

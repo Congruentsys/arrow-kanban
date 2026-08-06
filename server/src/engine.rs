@@ -24,8 +24,8 @@ use crate::handlers::ErrorResponse;
 use crate::handlers::core::{
     BoardRequest, CommentRequest, CreateRequest, CreateResponse, DeleteRequest, DeleteResponse,
     ExportRequest, HddCreateRequest, HistoryRequest, ListRequest, MoveRequest, MoveResponse,
-    NextIdRequest, RankRequest, RatifyRequest, RoadmapRequest, ShowRequest, UpdateRequest,
-    WorklistRequest,
+    NextIdRequest, RankRequest, RatifyRequest, RequeueRequest, RoadmapRequest, ShowRequest,
+    UpdateRequest, WorklistRequest,
 };
 use crate::handlers::relations::{RelationAddRequest, RelationQueryRequest, RelationRemoveRequest};
 use crate::health::HealthGate;
@@ -127,6 +127,10 @@ pub enum KanbanCommand {
     // ── Core CRUD + analytics ──
     Create(CreateRequest),
     Move(MoveRequest),
+    /// `requeue` — release a failed executor's claim, increment the item's
+    /// `attempt_count`, dead-letter at the caller's cap (issue #40). One engine
+    /// turn, so the whole transition is atomic under the single writer.
+    Requeue(RequeueRequest),
     Ratify(RatifyRequest),
     Update(UpdateRequest),
     Comment(CommentRequest),
@@ -195,6 +199,7 @@ impl KanbanCommand {
         match self {
             C::Create(_) => "create",
             C::Move(_) => "move",
+            C::Requeue(_) => "requeue",
             C::Ratify(_) => "ratify",
             C::Update(_) => "update",
             C::Comment(_) => "comment",
@@ -273,6 +278,7 @@ impl KanbanCommand {
         match self {
             C::Create(_)
             | C::Move(_)
+            | C::Requeue(_)
             | C::Ratify(_)
             | C::Update(_)
             | C::Comment(_)
@@ -420,6 +426,7 @@ fn parse_inner(verb: &str, payload: &[u8]) -> ParseOutcome {
     let cmd = match verb {
         "create" => C::Create(req!()),
         "move" => C::Move(req!()),
+        "requeue" => C::Requeue(req!()),
         "ratify" => C::Ratify(req!()),
         "update" => C::Update(req!()),
         "comment" => C::Comment(req!()),
@@ -863,6 +870,7 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
         match cmd {
             C::Create(req) => core::handle_create_typed(req, &mut self.store, &mut self.relations),
             C::Move(req) => core::handle_move_typed(req, &mut self.store),
+            C::Requeue(req) => core::handle_requeue_typed(req, &mut self.store),
             C::Ratify(req) => core::handle_ratify_typed(req, &mut self.store),
             C::Update(req) => core::handle_update_typed(req, &mut self.store, &mut self.relations),
             C::Comment(req) => core::handle_comment_typed(req, &mut self.store),

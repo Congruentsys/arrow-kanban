@@ -593,6 +593,7 @@ fn build_items_batch(items: &[ParsedItem]) -> Result<RecordBatch> {
             Arc::new(StringArray::from(vec![None::<&str>; n])), // closed_by
             Arc::new(TimestampMillisecondArray::from(vec![None::<i64>; n]).with_timezone("UTC")), // updated_at
             Arc::new(arrow::array::Int32Array::from(vec![None::<i32>; n])), // priority_rank
+            Arc::new(arrow::array::Int32Array::from(vec![Some(0); n])),     // attempt_count
         ],
     )?;
 
@@ -1200,7 +1201,7 @@ Some body content here.
 
         let batch = build_items_batch(&items).expect("build batch");
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 18);
+        assert_eq!(batch.num_columns(), 19);
 
         let ids = batch
             .column(items_col::ID)
@@ -1429,7 +1430,7 @@ Another body.
         // Verify items batch builds correctly
         let batch = result.items_batch().expect("items batch");
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 18);
+        assert_eq!(batch.num_columns(), 19);
 
         // Verify runs batch
         let runs_batch = result.runs_batch().expect("runs batch");

@@ -159,6 +159,7 @@ pub const CONTRACT_EXT_1: &str = "ext.1";
 pub enum MutationEvent {
     Created(CreatedEvent),
     Moved(MovedEvent),
+    Requeued(RequeuedEvent),
     Deleted(DeletedEvent),
     Ratified(RatifiedEvent),
     Updated(UpdatedEvent),
@@ -211,6 +212,25 @@ pub struct MovedEvent {
     pub reason: Option<String>,
     pub resolution: Option<String>,
     pub closed_by: Option<String>,
+}
+
+/// Replay-complete record of a requeue (issue #40). Carries the RESULT — the
+/// absolute post-requeue attempt count and the status landed on — never the
+/// delta, so a torn-checkpoint replay that re-presents the committed tail SETS
+/// the same values instead of double-incrementing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RequeuedEvent {
+    pub id: String,
+    /// Attempt count AFTER the requeue (absolute).
+    pub attempts: i32,
+    /// `backlog` (released) or `blocked` (dead-lettered at cap).
+    pub status: String,
+    pub dead_lettered: bool,
+    /// The tag applied on dead-letter (`None` on a plain release).
+    pub dead_letter_tag: Option<String>,
+    pub agent: Option<String>,
+    pub session: Option<String>,
+    pub reason: String,
 }
 
 /// Replay-complete record of a delete.
@@ -381,6 +401,24 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 closed_by: ostr(&q, "closed_by"),
             }))
         }
+        C::Requeue(req) => {
+            // Result fields come from the REPLY (the store's adjudication —
+            // attempts, landed status, dead-letter verdict); provenance comes
+            // from the request. Replay needs the result, not the inputs.
+            Some(MutationEvent::Requeued(RequeuedEvent {
+                id: ostr(&rv, "id")?,
+                attempts: rv.get("attempts").and_then(|x| x.as_i64())? as i32,
+                status: ostr(&rv, "status")?,
+                dead_lettered: rv
+                    .get("dead_lettered")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false),
+                dead_letter_tag: ostr(&rv, "dead_letter_tag"),
+                agent: req.agent.clone(),
+                session: req.session.clone(),
+                reason: req.reason.clone(),
+            }))
+        }
         C::Delete(req) => {
             let q = serde_json::to_value(req).ok()?;
             Some(MutationEvent::Deleted(DeletedEvent {
@@ -502,6 +540,7 @@ impl MutationEvent {
         match self {
             MutationEvent::Created(_) => "created",
             MutationEvent::Moved(_) => "moved",
+            MutationEvent::Requeued(_) => "requeued",
             MutationEvent::Deleted(_) => "deleted",
             MutationEvent::Ratified(_) => "ratified",
             MutationEvent::Updated(_) => "updated",
@@ -588,6 +627,15 @@ impl MutationEvent {
             .unwrap_or(serde_json::Value::Null),
             MutationEvent::Deleted(e) => serde_json::to_value(ItemDeleted { id: e.id.clone() })
                 .unwrap_or(serde_json::Value::Null),
+            MutationEvent::Requeued(e) => serde_json::json!({
+                "id": e.id,
+                "attempts": e.attempts,
+                "status": e.status,
+                "dead_lettered": e.dead_lettered,
+                "dead_letter_tag": e.dead_letter_tag,
+                "agent": e.agent,
+                "reason": e.reason,
+            }),
             MutationEvent::Ratified(e) => serde_json::json!({
                 "phase_tag": e.phase_tag,
                 "stripped": e.stripped,
@@ -698,6 +746,25 @@ impl MutationEvent {
                 }
                 if let Some(cb) = e.closed_by.as_deref() {
                     let _ = store.update_closed_by(&e.id, Some(cb));
+                }
+                Ok(())
+            }
+            MutationEvent::Requeued(e) => {
+                // Idempotent by construction: every write below SETS the value
+                // the event recorded (status, absolute attempt count, deduped
+                // tag) — re-presenting the tail after a torn checkpoint lands
+                // the same state. Never route through `requeue_item` here: it
+                // increments and re-adjudicates the cap, which would drift.
+                store
+                    .update_status(&e.id, &e.status, e.agent.as_deref(), true, Some(&e.reason))
+                    .map_err(|err| format!("replay requeue {}: {err}", e.id))?;
+                let _ = store.update_assignee(&e.id, None);
+                store
+                    .set_attempt_count(&e.id, e.attempts)
+                    .map_err(|err| format!("replay requeue {}: {err}", e.id))?;
+                if let Some(tag) = e.dead_letter_tag.as_deref() {
+                    let _ =
+                        store.add_to_list_field(&e.id, arrow_kanban::schema::items_col::TAGS, tag);
                 }
                 Ok(())
             }
@@ -1109,5 +1176,69 @@ mod tests {
         MutationEvent::Deleted(DeletedEvent { id: "CH-9".into() })
             .replay_into(&mut store, &mut rels)
             .expect("idempotent delete replay");
+    }
+
+    /// Issue #40: the requeue event carries the RESULT (absolute attempts,
+    /// landed status), so a torn-checkpoint replay that re-presents the tail
+    /// SETS the same state — never double-increments, never double-tags.
+    #[test]
+    fn issue40_requeued_derives_from_reply_and_replays_idempotently() {
+        use arrow_kanban::crud::KanbanStore;
+        use arrow_kanban::relations::RelationsStore;
+        use arrow_kanban::schema::items_col;
+
+        // Derive: result fields come from the reply, provenance from the request.
+        let req = crate::handlers::core::RequeueRequest {
+            id: "CH-9".into(),
+            agent: Some("Air".into()),
+            session: Some("sess-7".into()),
+            reason: "executor died".into(),
+            cap: 2,
+            dead_letter_tag: "dead-letter".into(),
+        };
+        let reply = KanbanReply::Value(serde_json::json!({
+            "id": "CH-9",
+            "attempts": 5,
+            "status": "blocked",
+            "dead_lettered": true,
+            "dead_letter_tag": "dead-letter",
+        }));
+        let ev = mutation_event(&KanbanCommand::Requeue(req), &reply)
+            .expect("requeue derives a mutation event");
+        let MutationEvent::Requeued(ref e) = ev else {
+            panic!("expected Requeued, got {ev:?}");
+        };
+        assert_eq!(e.attempts, 5);
+        assert_eq!(e.status, "blocked");
+        assert!(e.dead_lettered);
+        assert_eq!(e.dead_letter_tag.as_deref(), Some("dead-letter"));
+        assert_eq!(e.agent.as_deref(), Some("Air"));
+        assert_eq!(ev.subject_suffix(), "requeued");
+
+        // Replay twice onto the same store: absolute values, no drift.
+        let mut store = KanbanStore::new();
+        let mut rels = RelationsStore::new();
+        created_ev()
+            .replay_into(&mut store, &mut rels)
+            .expect("seed item");
+        ev.replay_into(&mut store, &mut rels)
+            .expect("replay requeue");
+        ev.replay_into(&mut store, &mut rels)
+            .expect("idempotent requeue replay");
+
+        assert_eq!(
+            store.attempt_count("CH-9").unwrap(),
+            5,
+            "SET, not incremented"
+        );
+        let (status, assignee) = store.status_and_assignee("CH-9").unwrap();
+        assert_eq!(status, "blocked");
+        assert_eq!(assignee, None, "unassigned on replay");
+        let tags = store.get_list_field("CH-9", items_col::TAGS).unwrap();
+        assert_eq!(
+            tags.iter().filter(|t| t.as_str() == "dead-letter").count(),
+            1,
+            "tag applied exactly once across two replays: {tags:?}"
+        );
     }
 }

@@ -31,6 +31,7 @@ pub mod items_col {
     pub const CLOSED_BY: usize = 15;
     pub const UPDATED_AT: usize = 16;
     pub const PRIORITY_RANK: usize = 17;
+    pub const ATTEMPT_COUNT: usize = 18;
 }
 
 /// Named column indices for RelationsTable.
@@ -107,6 +108,9 @@ pub fn items_schema() -> Arc<Schema> {
             true, // nullable for backward compat with old Parquet
         ),
         Field::new("priority_rank", DataType::Int32, true), // numeric sort order (1=highest)
+        // Requeue attempts (issue #40). Nullable for backward compat with old
+        // Parquet — a null reads as 0 (the item predates the column).
+        Field::new("attempt_count", DataType::Int32, true),
     ]))
 }
 
@@ -212,7 +216,7 @@ mod tests {
     #[test]
     fn test_items_schema_creates_record_batch() {
         let schema = items_schema();
-        assert_eq!(schema.fields().len(), 18);
+        assert_eq!(schema.fields().len(), 19);
         assert_eq!(schema.field(items_col::ID).name(), "id");
         assert_eq!(schema.field(items_col::TITLE).name(), "title");
         assert_eq!(schema.field(items_col::DELETED).name(), "deleted");
@@ -254,12 +258,13 @@ mod tests {
                 Arc::new(StringArray::from(vec![None::<&str>])), // closed_by
                 Arc::new(TimestampMillisecondArray::from(vec![None::<i64>]).with_timezone("UTC")), // updated_at
                 Arc::new(arrow::array::Int32Array::from(vec![None::<i32>])), // priority_rank
+                Arc::new(arrow::array::Int32Array::from(vec![Some(0)])),     // attempt_count
             ],
         )
         .expect("should create items RecordBatch");
 
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 18);
+        assert_eq!(batch.num_columns(), 19);
     }
 
     #[test]
@@ -324,6 +329,10 @@ mod tests {
         assert_eq!(
             schema.field(items_col::PRIORITY_RANK).name(),
             "priority_rank"
+        );
+        assert_eq!(
+            schema.field(items_col::ATTEMPT_COUNT).name(),
+            "attempt_count"
         );
 
         let rel_schema = relations_schema();
