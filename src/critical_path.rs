@@ -266,7 +266,7 @@ pub fn compute_critical_path(items: &[ItemInfo]) -> Result<CriticalPathResult, S
 
     // Compute downstream (transitive dependent) count
     let mut downstream_count: HashMap<String, usize> = HashMap::new();
-    // The reachable SET per node, memoised alongside the count (CH-6992/CH-7154).
+    // The reachable SET per node, memoised alongside the count.
     // Kept separate from `downstream_count` so the public shape is unchanged.
     let mut downstream_set: HashMap<String, HashSet<String>> = HashMap::new();
     // Process in reverse topological order
@@ -1398,7 +1398,7 @@ mod tests {
         assert_eq!(cp.downstream_count["EX-5"], 0);
     }
 
-    /// The CH-6992 defect, upstream (fleet item CH-7154): `downstream_count`
+    /// The memoisation defect this guards: `downstream_count`
     /// summed over PATHS, so any node reachable more than one way counted once
     /// per path — every diamond inflated, compounding with depth (measured on a
     /// live board: 108 reported vs 19 true, 5.7x). The count must be the
