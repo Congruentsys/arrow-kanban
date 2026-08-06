@@ -17,6 +17,14 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" || exit 1
 fail() { echo "❌ [export-gate] $1" >&2; exit 1; }
 SCAN_DIRS="src tests ontology themes server/src server/tests"
 
+# NO self-exclusion filters — deliberately (upstream finding; issue #47). The gate's own
+# files live in scripts/, which SCAN_DIRS does not include, so the scan already never sees
+# them: the path IS the exclusion. The old content-based form (`| grep -v 'export-gate'`)
+# exempted every scanned LINE containing that string, so appending the literal text
+# "export-gate" to any comment smuggled closed material past the gate — silently, and
+# precisely in the comments most likely to discuss it. If a scanned file ever needs a
+# legitimate exemption, exclude it BY FILENAME (`grep --exclude=<file>`), never by content.
+
 # ── (b) Closed-vocabulary lexical scan ───────────────────────────────────────
 # Proprietary ontology vocabulary (Y-layers · certifiability · proof types ·
 # plane tags) and upstream brand names must NOT appear in the open tree.
@@ -24,7 +32,7 @@ VOCAB='y-?layer|certifiab|proof-?type|proof-carrying|neural-?triple|certifiabili
 BRAND='\bnusy\b|nusy[-_]|nusy\.dev|\byurtle\b|noesis'
 CLOSED_CRATES='nusy-arrow|graph_query|graph-query|graph_review|graph-review|nusy-conductor|nusy-cranelift|codegraph|nusy-evaluator|tutor-record'
 
-hits=$(grep -rniE "$VOCAB|$BRAND|$CLOSED_CRATES" $SCAN_DIRS 2>/dev/null | grep -v 'export-gate' || true)
+hits=$(grep -rniE "$VOCAB|$BRAND|$CLOSED_CRATES" $SCAN_DIRS 2>/dev/null || true)
 if [ -n "$hits" ]; then
     echo "$hits" | head -20 >&2
     fail "closed-vocabulary / brand / closed-crate terms found in the open tree (above)."
@@ -39,7 +47,7 @@ fi
 # word char, so a trailing \b never matches after `captain` (E2 review Finding 1, DGX2).
 # The tier/being/genome/ship terms cover the autonomy-tier + being-runtime config vocab.
 D1_CONCEPTS='\bcaptain[_-]?|check_ratification|PENDING_TAG|body_says_pending|RatificationFinding|format_ratification|voyage_id_from_tag|decision-?ledger|training_queue|training_runner|cog-?training|being_approved|sealed_genome|being_config|ship_config|awakening|cognitive_params|autonomy[_ -]?tier'
-d1hits=$(grep -rniE "$D1_CONCEPTS" $SCAN_DIRS 2>/dev/null | grep -v 'export-gate' || true)
+d1hits=$(grep -rniE "$D1_CONCEPTS" $SCAN_DIRS 2>/dev/null || true)
 if [ -n "$d1hits" ]; then
     echo "$d1hits" | head -20 >&2
     fail "D1 move-inward concept (Captain-rank / pending-ratification GATE / decision-ledger / training) found in the open tree (above) — these belong in fleet composition (nusy-agenda), not the open engine. Tags-as-opaque-strings are fine; the enforcement gate is not."
@@ -51,7 +59,7 @@ fi
 # DATA. A SINGLE agent name as an assignee VALUE is fine (opaque data), so match a
 # comma/semicolon-separated list of TWO+ roster names, never a lone name.
 ROSTER='\b(DGX[12]?|M5|Mini|Air)\b *[,;] *\b(DGX[12]?|M5|Mini|Air)\b'
-rosterhits=$(grep -rniE "$ROSTER" $SCAN_DIRS 2>/dev/null | grep -vE 'export-gate|red-battery' || true)
+rosterhits=$(grep -rniE "$ROSTER" $SCAN_DIRS 2>/dev/null || true)
 if [ -n "$rosterhits" ]; then
     echo "$rosterhits" | head -20 >&2
     fail "a hardcoded fleet-roster list (two+ agent names comma-separated) is in the open tree (above) — the open engine derives agents from board DATA, never a baked-in roster."
@@ -93,7 +101,6 @@ if [ -n "$_strip_probe" ]; then
 fi
 provhits=$(grep -rnE "$PROV_ID" $SCAN_DIRS 2>/dev/null \
     | grep -E ':[0-9]+:[[:space:]]*(//|#|\*)' \
-    | grep -vE 'export-gate|red-battery' \
     | perl -pe "s/$PROV_OK//g" \
     | grep -E "$PROV_ID" || true)
 if [ -n "$provhits" ]; then
@@ -107,8 +114,7 @@ fi
 # CLI handed people, while the doc comment four lines above already said `arrow-kanban`. A
 # comment-only scan is green in exactly that case. `\bnk ` cannot match inside a word
 # ("I think about it" does not match), so all-lines costs no false positives here.
-aliashits=$(grep -rnE '(\bCLAUDE\b|\bnk [a-z][a-z-]*\b)' $SCAN_DIRS 2>/dev/null \
-    | grep -vE 'export-gate|red-battery' || true)
+aliashits=$(grep -rnE '(\bCLAUDE\b|\bnk [a-z][a-z-]*\b)' $SCAN_DIRS 2>/dev/null || true)
 if [ -n "$aliashits" ]; then
     echo "$aliashits" | head -20 >&2
     fail "upstream alias/guide reference (\`nk <cmd>\` or CLAUDE) in the open tree (above) — the public binary is \`arrow-kanban\`."
@@ -149,7 +155,6 @@ fi
 # "HZ-6053 INVARIANT VIOLATED ...", which is the shape that actually shipped.
 PROSE_ID="([a-z]{2,} +$PROV_ID|\"$PROV_ID[: ]+[A-Za-z])"
 prosehits=$(grep -rnE "$PROSE_ID" $SCAN_DIRS 2>/dev/null \
-    | grep -vE 'export-gate|red-battery' \
     | perl -pe "s/$PROV_OK//g" \
     | grep -E "$PROSE_ID" || true)
 if [ -n "$prosehits" ]; then
