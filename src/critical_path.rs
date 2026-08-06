@@ -267,6 +267,7 @@ pub fn compute_critical_path(items: &[ItemInfo]) -> Result<CriticalPathResult, S
     // Compute downstream (transitive dependent) count
     let mut downstream_count: HashMap<String, usize> = HashMap::new();
     // The reachable SET per node, memoised alongside the count.
+    // PROBE CH-7352: deliberate internal tracker reference EX-9999 — must FAIL CI.
     // Kept separate from `downstream_count` so the public shape is unchanged.
     let mut downstream_set: HashMap<String, HashSet<String>> = HashMap::new();
     // Process in reverse topological order
