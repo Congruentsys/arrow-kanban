@@ -734,7 +734,8 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
                     "REFUSED — the kanban store is not accepting durable writes ({reason}). Your \
                      change was NOT applied. Reads still work. Free the underlying problem (usually a \
                      full disk); the server re-probes and recovers automatically. \
-                     [server session start_ms={} — CH-7025]",
+                     [server session start_ms={} — compare via pipeline-health to tell a \
+                     restart from a recovery]",
                     self.health.session_start_ms()
                 ),
                 "STORE_DEGRADED",
@@ -846,7 +847,7 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
                                     "'{verb}' was applied in memory but COULD NOT BE COMMITTED ({err}). \
                                      Treat this write as LOST — it will not survive a restart. The server is \
                                      now DEGRADED and further mutations are refused until the store accepts \
-                                     writes again. [server session start_ms={} — CH-7025: after recovery, \
+                                     writes again. [server session start_ms={} — after recovery, \
                                      compare via pipeline-health; a CHANGED value means the server restarted \
                                      and this write is gone (redo it); UNCHANGED means the in-memory write \
                                      was flushed (redoing DUPLICATES).]",

@@ -86,7 +86,7 @@ pub struct HealthGate {
     last_probe_ms: u64,
     probe_interval: Duration,
     probe_bytes: usize,
-    /// CH-7025: the server SESSION identity — process-start wall-clock ms,
+    /// The server SESSION identity — process-start wall-clock ms,
     /// fixed at construction. A `STORE_NOT_DURABLE` write is gone only if the
     /// server RESTARTED after it; naming this in the refusal (and exposing it
     /// on a degraded-safe read) makes that conditional checkable instead of a
@@ -119,7 +119,7 @@ impl HealthGate {
         }
     }
 
-    /// CH-7025: the session identity (process-start ms) this gate was built with.
+    /// The session identity (process-start ms) this gate was built with.
     pub fn session_start_ms(&self) -> u64 {
         self.session_start_ms
     }
