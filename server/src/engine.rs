@@ -27,7 +27,7 @@ use crate::handlers::core::{
     NextIdRequest, RankRequest, RatifyRequest, RoadmapRequest, ShowRequest, UpdateRequest,
     WorklistRequest,
 };
-use crate::handlers::relations::{RelationAddRequest, RelationQueryRequest};
+use crate::handlers::relations::{RelationAddRequest, RelationQueryRequest, RelationRemoveRequest};
 use crate::health::HealthGate;
 use crate::lease::{LocalWriterLease, WriterLease};
 use crate::storage::{CommittedEvent, ParquetBackend, Seq, StorageBackend, StoreError};
@@ -155,6 +155,7 @@ pub enum KanbanCommand {
     HddRegistry,
     // ── Relations ──
     RelationAdd(RelationAddRequest),
+    RelationRemove(RelationRemoveRequest),
     RelationQuery(RelationQueryRequest),
     // ── Command extension (E3 3c-i) ──
     /// A namespaced extension verb (`ext.<namespace>.<verb>`), resolved against
@@ -227,6 +228,7 @@ impl KanbanCommand {
             C::HddValidate => "hdd.validate",
             C::HddRegistry => "hdd.registry",
             C::RelationAdd(_) => "relation.add",
+            C::RelationRemove(_) => "relation.remove",
             C::RelationQuery(_) => "relation.query",
             // The opaque, frozen &'static for every extension verb — the &'static
             // cannot name the dynamic verb. `verb_display` carries the real name.
@@ -277,7 +279,8 @@ impl KanbanCommand {
             | C::Rank(_)
             | C::Delete(_)
             | C::HddCreate(_, _)
-            | C::RelationAdd(_) => true,
+            | C::RelationAdd(_)
+            | C::RelationRemove(_) => true,
             // A property of the REGISTRATION (from `ExtVerbSpec`), not the opaque
             // `verb_str` — so it travels on the command itself.
             C::Extension(e) => e.is_mutation,
@@ -313,7 +316,10 @@ impl KanbanCommand {
     /// Whether this command mutates the *relations* store (an extra persist).
     /// Mirrors the former `is_relation_mutation` — only `relation.add`.
     pub fn is_relation_mutation(&self) -> bool {
-        matches!(self, KanbanCommand::RelationAdd(_))
+        matches!(
+            self,
+            KanbanCommand::RelationAdd(_) | KanbanCommand::RelationRemove(_)
+        )
     }
 }
 
@@ -352,6 +358,7 @@ pub const ALL_VERBS: &[&str] = &[
     "hdd.validate",
     "hdd.registry",
     "relation.add",
+    "relation.remove",
     "relation.query",
     "git.push",
     "git.pull",
@@ -442,6 +449,7 @@ fn parse_inner(verb: &str, payload: &[u8]) -> ParseOutcome {
         "hdd.validate" => C::HddValidate,
         "hdd.registry" => C::HddRegistry,
         "relation.add" => C::RelationAdd(req!()),
+        "relation.remove" => C::RelationRemove(req!()),
         "relation.query" => C::RelationQuery(req!()),
         "git.push" => C::GitStubAck("git.push"),
         "git.pull" => C::GitStubAck("git.pull"),
@@ -887,6 +895,9 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
             C::HddValidate => core::handle_hdd_validate_typed(&self.store, &self.relations),
             C::HddRegistry => core::handle_hdd_registry_typed(&self.store, &self.relations),
             C::RelationAdd(req) => relations::handle_relation_add_typed(req, &mut self.relations),
+            C::RelationRemove(req) => {
+                relations::handle_relation_remove_typed(req, &mut self.relations)
+            }
             C::RelationQuery(req) => relations::handle_relation_query_typed(req, &self.relations),
             C::Extension(ext) => match self.extension.as_mut() {
                 // Run the extension's own apply. Its typed error reply is mapped
