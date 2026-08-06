@@ -40,9 +40,24 @@ pub enum CrudError {
         current: String,
         attempted: String,
     },
+
+    #[error("Invalid requeue: {0}")]
+    InvalidRequeue(String),
 }
 
 pub type Result<T> = std::result::Result<T, CrudError>;
+
+/// What [`KanbanStore::requeue_item`] did (issue #40).
+#[derive(Debug, Clone)]
+pub struct RequeueOutcome {
+    pub id: String,
+    /// The attempt count AFTER this requeue — the absolute value the derived
+    /// event carries, so replay sets rather than increments.
+    pub attempts: i32,
+    /// `backlog` (released, claimable) or `blocked` (dead-lettered at cap).
+    pub status: String,
+    pub dead_lettered: bool,
+}
 
 /// What [`KanbanStore::ratify_phase`] did — the built-in verify (the whole point: a
 /// partial strip must be impossible-or-caught, never silent).
@@ -284,6 +299,7 @@ impl KanbanStore {
                 Arc::new(StringArray::from(vec![None::<&str>])), // closed_by
                 Arc::new(TimestampMillisecondArray::from(vec![now_ms]).with_timezone("UTC")), // updated_at = created_at
                 Arc::new(arrow::array::Int32Array::from(vec![None::<i32>])), // priority_rank
+                Arc::new(arrow::array::Int32Array::from(vec![Some(0)])),     // attempt_count
             ],
         )?;
 
@@ -351,6 +367,7 @@ impl KanbanStore {
                 Arc::new(StringArray::from(vec![None::<&str>])), // closed_by
                 Arc::new(TimestampMillisecondArray::from(vec![now_ms]).with_timezone("UTC")), // updated_at
                 Arc::new(arrow::array::Int32Array::from(vec![None::<i32>])), // priority_rank
+                Arc::new(arrow::array::Int32Array::from(vec![Some(0)])),     // attempt_count
             ],
         )?;
 
@@ -914,6 +931,88 @@ impl KanbanStore {
     pub fn update_rank(&mut self, id: &str, rank: Option<i32>) -> Result<()> {
         self.update_nullable_int32_field(id, items_col::PRIORITY_RANK, rank)?;
         self.touch_updated_at(id)
+    }
+
+    /// Read an item's requeue attempt count. A null reads as 0 — the item
+    /// predates the `attempt_count` column (loaded from old Parquet via
+    /// `normalize_batch`, which pads with nulls).
+    pub fn attempt_count(&self, id: &str) -> Result<i32> {
+        let item = self.get_item(id)?;
+        let col = item
+            .column(items_col::ATTEMPT_COUNT)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .expect("attempt_count column");
+        Ok(if col.is_null(0) { 0 } else { col.value(0) })
+    }
+
+    /// Set an item's requeue attempt count to an absolute value. Used by
+    /// [`requeue_item`](Self::requeue_item) and by event replay — replay sets
+    /// the value the event recorded rather than incrementing, so re-presenting
+    /// a committed tail after a torn checkpoint cannot double-count.
+    pub fn set_attempt_count(&mut self, id: &str, count: i32) -> Result<()> {
+        self.update_nullable_int32_field(id, items_col::ATTEMPT_COUNT, Some(count))
+    }
+
+    /// Requeue an item whose executor failed (issue #40): release the claim,
+    /// increment `attempt_count`, and record failure provenance — in ONE store
+    /// call, so the server's single-writer turn makes the whole transition
+    /// atomic (no claim-released-but-count-lost interleaving).
+    ///
+    /// Below `cap`, the item returns to `backlog` unassigned (claimable again).
+    /// At `cap` (`attempts + 1 >= cap`), the item DEAD-LETTERS instead: status
+    /// `blocked`, the caller's `dead_letter_tag` added, unassigned — parked off
+    /// the claimable frontier for a human/planner, never silently retried
+    /// forever. `blocked` is an engine-level parking state written directly
+    /// (like replay, this bypasses board transition validation on purpose —
+    /// dead-letter is not a workflow move an agent chooses).
+    ///
+    /// Provenance {agent, session, reason} lands in the runs table via the
+    /// status change's run record; the composed reason names the attempt.
+    /// Only an `in_progress` item can be requeued — requeue releases a claim,
+    /// and there is no claim to release anywhere else.
+    pub fn requeue_item(
+        &mut self,
+        id: &str,
+        agent: Option<&str>,
+        session: Option<&str>,
+        reason: &str,
+        cap: i32,
+        dead_letter_tag: &str,
+    ) -> Result<RequeueOutcome> {
+        if cap < 1 {
+            return Err(CrudError::InvalidRequeue(format!(
+                "cap must be >= 1, got {cap}"
+            )));
+        }
+        let (_, _, status) = self.find_item_mut(id)?;
+        if status != "in_progress" {
+            return Err(CrudError::InvalidRequeue(format!(
+                "{id} is '{status}', not in_progress — requeue releases a claim, and there is no claim to release"
+            )));
+        }
+
+        let attempts = self.attempt_count(id)? + 1;
+        let dead_lettered = attempts >= cap;
+        let to_status = if dead_lettered { "blocked" } else { "backlog" };
+        let run_reason = match session {
+            Some(s) => format!("requeue #{attempts} (session {s}): {reason}"),
+            None => format!("requeue #{attempts}: {reason}"),
+        };
+
+        self.update_status(id, to_status, agent, false, Some(&run_reason))?;
+        self.update_assignee(id, None)?;
+        self.set_attempt_count(id, attempts)?;
+        if dead_lettered {
+            self.add_to_list_field(id, items_col::TAGS, dead_letter_tag)?;
+        }
+
+        Ok(RequeueOutcome {
+            id: id.to_string(),
+            attempts,
+            status: to_status.to_string(),
+            dead_lettered,
+        })
     }
 
     /// Logical delete an item.
@@ -2180,5 +2279,144 @@ mod tests {
         let (status, assignee) = store.status_and_assignee(&id).unwrap();
         assert_eq!(status, "in_progress");
         assert_eq!(assignee.as_deref(), Some("Mini"));
+    }
+
+    // ── Requeue (issue #40) ─────────────────────────────────────────────────
+
+    fn claimed_item(store: &mut KanbanStore) -> String {
+        let id = store
+            .create_item(&sample_input("Flaky work", ItemType::Chore))
+            .unwrap();
+        store
+            .update_status(&id, "in_progress", Some("Air"), false, None)
+            .unwrap();
+        store.update_assignee(&id, Some("Air")).unwrap();
+        id
+    }
+
+    #[test]
+    fn issue40_requeue_releases_claim_increments_and_records_provenance() {
+        let mut store = KanbanStore::new();
+        let id = claimed_item(&mut store);
+        assert_eq!(store.attempt_count(&id).unwrap(), 0);
+
+        let out = store
+            .requeue_item(
+                &id,
+                Some("Air"),
+                Some("sess-1"),
+                "executor died mid-build",
+                3,
+                "dead-letter",
+            )
+            .unwrap();
+        assert_eq!(out.attempts, 1);
+        assert_eq!(out.status, "backlog");
+        assert!(!out.dead_lettered);
+
+        let (status, assignee) = store.status_and_assignee(&id).unwrap();
+        assert_eq!(status, "backlog", "claim released to the frontier");
+        assert_eq!(assignee, None, "unassigned on release");
+        assert_eq!(store.attempt_count(&id).unwrap(), 1);
+
+        // Provenance: the status change's run record carries agent + composed reason.
+        let runs = store.runs_batches();
+        let last = runs.last().expect("runs recorded");
+        let reasons = last
+            .column(runs_col::REASON)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let last_reason = reasons.value(last.num_rows() - 1);
+        assert!(
+            last_reason.contains("requeue #1")
+                && last_reason.contains("sess-1")
+                && last_reason.contains("executor died mid-build"),
+            "run reason carries attempt + session + failure: {last_reason}"
+        );
+    }
+
+    #[test]
+    fn issue40_requeue_dead_letters_at_cap() {
+        let mut store = KanbanStore::new();
+        let id = claimed_item(&mut store);
+
+        // cap=2: first requeue releases…
+        let out = store
+            .requeue_item(&id, Some("Air"), None, "fail 1", 2, "dead-letter")
+            .unwrap();
+        assert!(!out.dead_lettered);
+        assert_eq!(out.status, "backlog");
+
+        // …re-claim, second requeue hits the cap and dead-letters.
+        store
+            .update_status(&id, "in_progress", Some("M5"), false, None)
+            .unwrap();
+        store.update_assignee(&id, Some("M5")).unwrap();
+        let out = store
+            .requeue_item(&id, Some("M5"), None, "fail 2", 2, "dead-letter")
+            .unwrap();
+        assert!(out.dead_lettered);
+        assert_eq!(out.attempts, 2);
+        assert_eq!(out.status, "blocked");
+
+        let (status, assignee) = store.status_and_assignee(&id).unwrap();
+        assert_eq!(
+            status, "blocked",
+            "dead-letter parks OFF the claimable frontier"
+        );
+        assert_eq!(assignee, None);
+        let tags = store.get_list_field(&id, items_col::TAGS).unwrap();
+        assert!(
+            tags.iter().any(|t| t == "dead-letter"),
+            "dead-letter tag applied: {tags:?}"
+        );
+    }
+
+    #[test]
+    fn issue40_requeue_refuses_unclaimed_item_and_bad_cap() {
+        let mut store = KanbanStore::new();
+        let id = store
+            .create_item(&sample_input("Unclaimed", ItemType::Chore))
+            .unwrap();
+        // backlog item: no claim to release → refuse.
+        let err = store
+            .requeue_item(&id, None, None, "why", 3, "dead-letter")
+            .unwrap_err();
+        assert!(
+            matches!(err, CrudError::InvalidRequeue(_)),
+            "unclaimed requeue refused: {err}"
+        );
+        assert_eq!(
+            store.attempt_count(&id).unwrap(),
+            0,
+            "refusal writes nothing"
+        );
+
+        // cap < 1 → refuse before touching anything.
+        let id2 = claimed_item(&mut store);
+        let err = store
+            .requeue_item(&id2, None, None, "why", 0, "dead-letter")
+            .unwrap_err();
+        assert!(matches!(err, CrudError::InvalidRequeue(_)));
+        let (status, _) = store.status_and_assignee(&id2).unwrap();
+        assert_eq!(status, "in_progress", "refusal did not release the claim");
+    }
+
+    #[test]
+    fn issue40_null_attempt_count_reads_zero_and_requeues_from_zero() {
+        // An item loaded from OLD Parquet has a null attempt_count (normalize_batch
+        // pads with nulls). Null must read as 0 and the first requeue land at 1.
+        let mut store = KanbanStore::new();
+        let id = claimed_item(&mut store);
+        store
+            .update_nullable_int32_field(&id, items_col::ATTEMPT_COUNT, None)
+            .unwrap();
+        assert_eq!(store.attempt_count(&id).unwrap(), 0, "null reads as 0");
+
+        let out = store
+            .requeue_item(&id, Some("Air"), None, "first failure", 3, "dead-letter")
+            .unwrap();
+        assert_eq!(out.attempts, 1, "null base increments to 1, not garbage");
     }
 }

@@ -241,6 +241,77 @@ pub(crate) fn handle_move_typed(
     }))
 }
 
+// ── Requeue (issue #40) ──────────────────────────────────────────────────────
+
+fn default_requeue_cap() -> i32 {
+    3
+}
+
+fn default_dead_letter_tag() -> String {
+    "dead-letter".to_string()
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RequeueRequest {
+    pub id: String,
+    /// The agent reporting the failure (run provenance).
+    pub agent: Option<String>,
+    /// The executor session that failed (folded into the run reason).
+    pub session: Option<String>,
+    /// Why the attempt failed. Required — a requeue with no reason is
+    /// exactly the unexplained-dangler the dead-letter path exists to stop.
+    pub reason: String,
+    /// Attempts at/above which the item dead-letters instead of releasing.
+    #[serde(default = "default_requeue_cap")]
+    pub cap: i32,
+    #[serde(default = "default_dead_letter_tag")]
+    pub dead_letter_tag: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RequeueResponse {
+    pub id: String,
+    /// The attempt count AFTER this requeue (absolute — replay sets this).
+    pub attempts: i32,
+    /// `backlog` (released) or `blocked` (dead-lettered).
+    pub status: String,
+    pub dead_lettered: bool,
+    pub dead_letter_tag: Option<String>,
+}
+
+pub(crate) fn handle_requeue_typed(
+    req: RequeueRequest,
+    store: &mut KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
+    if req.reason.trim().is_empty() {
+        return Err(error_response(
+            "requeue requires a non-empty reason (failure provenance)",
+            "REQUEUE_INVALID",
+        ));
+    }
+    let outcome = store
+        .requeue_item(
+            &req.id,
+            req.agent.as_deref(),
+            req.session.as_deref(),
+            &req.reason,
+            req.cap,
+            &req.dead_letter_tag,
+        )
+        .map_err(|e| error_response(&format!("{e}"), "REQUEUE_FAILED"))?;
+
+    let resp = RequeueResponse {
+        id: outcome.id,
+        attempts: outcome.attempts,
+        status: outcome.status,
+        dead_lettered: outcome.dead_lettered,
+        dead_letter_tag: outcome.dead_lettered.then(|| req.dead_letter_tag.clone()),
+    };
+    Ok(KanbanReply::Value(serde_json::to_value(&resp).map_err(
+        |e| error_response(&format!("Serialization error: {e}"), "INTERNAL"),
+    )?))
+}
+
 // ── Ratify ───────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Serialize, Deserialize)]

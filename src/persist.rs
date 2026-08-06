@@ -321,6 +321,96 @@ mod tests {
     }
 
     #[test]
+    fn issue40_old_parquet_without_attempt_count_loads_and_requeues() {
+        // Simulate a PRE-#40 snapshot: an items.parquet whose schema ends at
+        // priority_rank (18 columns). normalize_batch must pad the missing
+        // attempt_count with nulls, which read as 0 — and a requeue must work.
+        use crate::schema::{items_col, items_schema};
+        use arrow::array::{
+            Array, BooleanArray, ListBuilder, RecordBatch, StringArray, StringBuilder,
+            TimestampMillisecondArray,
+        };
+        use std::sync::Arc;
+
+        let full = items_schema();
+        assert_eq!(
+            full.fields().len(),
+            items_col::ATTEMPT_COUNT + 1,
+            "attempt_count is the LAST column (this test builds 'old' data as all-but-last)"
+        );
+        let old_schema =
+            arrow::datatypes::Schema::new(full.fields()[..items_col::ATTEMPT_COUNT].to_vec());
+
+        let mut tags = ListBuilder::new(StringBuilder::new());
+        tags.values().append_value("kanban-v2");
+        tags.append(true);
+        let mut related = ListBuilder::new(StringBuilder::new());
+        related.append(true);
+        let mut depends = ListBuilder::new(StringBuilder::new());
+        depends.append(true);
+
+        let old_batch = RecordBatch::try_new(
+            Arc::new(old_schema.clone()),
+            vec![
+                Arc::new(StringArray::from(vec!["CH-100"])),
+                Arc::new(StringArray::from(vec!["Pre-#40 item"])),
+                Arc::new(StringArray::from(vec!["chore"])),
+                Arc::new(StringArray::from(vec!["in_progress"])),
+                Arc::new(StringArray::from(vec![None::<&str>])),
+                Arc::new(
+                    TimestampMillisecondArray::from(vec![1710374400000i64]).with_timezone("UTC"),
+                ),
+                Arc::new(StringArray::from(vec![Some("Air")])),
+                Arc::new(StringArray::from(vec!["development"])),
+                Arc::new(tags.finish()),
+                Arc::new(related.finish()),
+                Arc::new(depends.finish()),
+                Arc::new(StringArray::from(vec![None::<&str>])),
+                Arc::new(StringArray::from(vec![None::<&str>])),
+                Arc::new(BooleanArray::from(vec![false])),
+                Arc::new(StringArray::from(vec![None::<&str>])),
+                Arc::new(StringArray::from(vec![None::<&str>])),
+                Arc::new(TimestampMillisecondArray::from(vec![None::<i64>]).with_timezone("UTC")),
+                Arc::new(arrow::array::Int32Array::from(vec![None::<i32>])),
+            ],
+        )
+        .expect("old-schema batch");
+
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let ddir = data_dir(dir.path()).expect("data dir");
+        save_named_batches(
+            &[("items", std::slice::from_ref(&old_batch), &old_schema)],
+            &ddir,
+        )
+        .expect("save old-schema parquet");
+
+        let mut loaded = load_store(dir.path()).expect("load old parquet under new schema");
+        let item = loaded.get_item("CH-100").expect("item present");
+        assert_eq!(
+            item.num_columns(),
+            items_col::ATTEMPT_COUNT + 1,
+            "padded to 19"
+        );
+        assert!(
+            item.column(items_col::ATTEMPT_COUNT).is_null(0),
+            "pad is null, not 0 — provenance of 'predates the column' is preserved"
+        );
+        assert_eq!(loaded.attempt_count("CH-100").expect("readable"), 0);
+
+        let out = loaded
+            .requeue_item(
+                "CH-100",
+                Some("Air"),
+                None,
+                "old item fails too",
+                3,
+                "dead-letter",
+            )
+            .expect("requeue works on migrated item");
+        assert_eq!(out.attempts, 1);
+    }
+
+    #[test]
     fn test_data_dir_created() {
         let dir = tempfile::tempdir().expect("create tempdir");
         let ddir = data_dir(dir.path()).expect("data dir");
