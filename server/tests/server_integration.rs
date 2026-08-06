@@ -1207,6 +1207,17 @@ fn test_unpersistable_mutation_is_reported_as_an_error_not_acked() {
         resp["error"].as_str().unwrap_or("").contains("LOST"),
         "the client must be told the write is lost: {resp}"
     );
+    // The refusal must NAME the server session — the redo-or-not rule
+    // is conditional on a restart, and a lost write reads back identical to a
+    // persisted one, so without this comparand the operator guesses (the
+    // 2026-07-31 blanket-redo instruction was wrong and would have duplicated).
+    assert!(
+        resp["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("session start_ms="),
+        "the refusal must carry the server session identity: {resp}"
+    );
 }
 
 /// ...and the server must then refuse further mutations rather than keep
@@ -1239,6 +1250,17 @@ fn test_server_degrades_and_refuses_subsequent_mutations() {
             .unwrap_or("")
             .contains("NOT applied"),
         "refusal must state the change was not applied: {second}"
+    );
+    // The degraded-gate refusal is the message an operator sees repeatedly
+    // mid-outage — it must carry the same session comparand as the first
+    // failure, or redo-or-not is only checkable against the message that
+    // scrolled away.
+    assert!(
+        second["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("session start_ms="),
+        "the degraded refusal must carry the server session identity: {second}"
     );
 }
 
