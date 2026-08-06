@@ -86,6 +86,13 @@ pub struct HealthGate {
     last_probe_ms: u64,
     probe_interval: Duration,
     probe_bytes: usize,
+    /// CH-7025: the server SESSION identity — process-start wall-clock ms,
+    /// fixed at construction. A `STORE_NOT_DURABLE` write is gone only if the
+    /// server RESTARTED after it; naming this in the refusal (and exposing it
+    /// on a degraded-safe read) makes that conditional checkable instead of a
+    /// guess (the 2026-07-31 blanket-redo instruction was wrong and would have
+    /// duplicated).
+    session_start_ms: u64,
 }
 
 impl Default for HealthGate {
@@ -108,7 +115,13 @@ impl HealthGate {
             last_probe_ms: 0,
             probe_interval: DEFAULT_PROBE_INTERVAL,
             probe_bytes: DEFAULT_PROBE_BYTES,
+            session_start_ms: now_ms(),
         }
+    }
+
+    /// CH-7025: the session identity (process-start ms) this gate was built with.
+    pub fn session_start_ms(&self) -> u64 {
+        self.session_start_ms
     }
 
     /// Construct with explicit probe tuning (tests, and future config).
@@ -118,6 +131,7 @@ impl HealthGate {
             last_probe_ms: 0,
             probe_interval,
             probe_bytes,
+            session_start_ms: now_ms(),
         }
     }
 
