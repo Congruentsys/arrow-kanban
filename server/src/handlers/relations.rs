@@ -29,7 +29,7 @@ pub(crate) fn handle_relation_add_typed(
     })))
 }
 
-// ── Relation Remove (CH-7319) ───────────────────────────────────────────────
+// ── Relation Remove ─────────────────────────────────────────────────────────
 //
 // The deletion half `relation.add` shipped without. Measured need: a FALSE
 // seeded edge (a pre-fix citation-scrape `leavesRemainder`) was UNDELETABLE

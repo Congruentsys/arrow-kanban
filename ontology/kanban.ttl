@@ -246,28 +246,30 @@ kb:hasMember a owl:ObjectProperty ;
     rdfs:label "hasMember" ;
     rdfs:comment "the target is a member of this grouping (derived inverse of partOf; stored one way only)" .
 
-# ── EX-7098: proposals join the graph ───────────────────────────────────────
+# ── proposals join the graph ────────────────────────────────────────────────
 # A proposal's link to the work item it closes was, until now, recoverable only by
-# MATCHING TEXT — and our prose cites ids by design (the citation rule, CH-6369), so
-# every such matcher confused a CITATION for the subject. Measured live: PROP-3926 was
-# reported as closing CH-6768 (a citation) rather than CH-7057; PROP-3924 as EX-6807
-# rather than EX-6983. The sweep that reads it ends its instruction with "+ close".
+# MATCHING TEXT against the proposal's prose. That cannot work when a project cites
+# item ids in prose deliberately (many do — a citation convention is good practice):
+# every such matcher confuses a CITATION for the subject. Measured on a live board,
+# two proposals in a row were reported as closing an item they merely CITED rather
+# than the one they closed — and the sweep that consumes this ends its instruction
+# with "+ close", so a misread closes the wrong item.
 #
 # Domain/range are kb:Item (= ANY) rather than a Proposal class, DELIBERATELY: the
 # guard `every_ttl_domain_and_range_names_a_real_item_type` requires every constraint
 # to name a registered ItemType, and Proposal is not one — it has its own namespace,
-# lifecycle and store. Admitting it properly is EX-7101 (kanban-v3), which then
-# TIGHTENS these two to Proposal→Item. Until then this is an honest any→any edge, and
-# the relations table already accepts a PROP- source_id (source_id/target_id are plain
+# lifecycle and store. Admitting proposals as a graph entity class is what TIGHTENS
+# these two to Proposal→Item. Until then this is an honest any→any edge, and the
+# relations table already accepts a PROP- source_id (source_id/target_id are plain
 # Utf8, schema.rs:113-126) — so this needs no schema change.
 
 # ---------------------------------------------------------------------------
-# Graph-admitted ENTITY CLASSES beyond the board (EX-7101).
+# Graph-admitted ENTITY CLASSES beyond the board.
 #
-# THE RULING (EX-7101 Phase 1, recorded where it binds): Proposal — and Comment,
+# THE RULING (recorded where it binds): Proposal — and Comment,
 # Run, ExperimentRun, CiResult — are DISTINCT KINDS, not ItemTypes. Evidence:
 # each has its own store and schema (ProposalStore; comments/runs schemas), its
-# own id namespace (PROP-2000+, CMT-*), and either a DIFFERENT lifecycle
+# own id namespace (a `PROP-` / `CMT-` prefix), and either a DIFFERENT lifecycle
 # (proposal: open/approved/merged/closed — not board statuses) or NONE (a
 # comment has no lifecycle at all). Admitting them as ItemTypes would put them
 # on board surfaces (list/move/boards) that deliberately exclude them. ItemType
@@ -302,9 +304,9 @@ kb:CiResult a owl:Class ;
     rdfs:label "CiResult" ;
     rdfs:comment "A CI/check result attached to a proposal (CiResultStore)." .
 
-# EX-7101 Phase 4 vocabulary — the FK relationships, typed. ADD is data-only;
+# FK-relationship vocabulary, typed. ADD is data-only;
 # USE (producers materializing these edges) is separate ordinary work, filed as
-# its own item — the measured ADD/USE split (CH-7163: 0 production Rust to add,
+# its own item — the measured ADD/USE split (0 production Rust to add,
 # normal Rust to wire).
 kb:commentOn a owl:ObjectProperty ;
     rdfs:domain kb:Comment ;
@@ -338,10 +340,10 @@ kb:closedBy a owl:ObjectProperty ;
     rdfs:label "closedBy" ;
     rdfs:comment "the target proposal closes this item (derived inverse of closes; stored one way only)" .
 
-# CH-7173: the supersession pair. Same any→any posture (and the same EX-7101 caveat)
+# The supersession pair. Same any→any posture (and the same entity-class caveat)
 # as closes/closedBy directly above: the motivating case is PROP-supersedes-PROP, and
-# a Proposal is not a registered ItemType until kanban-v3. Producers: `nk move …
-# --resolution superseded --superseded-by <ID>` and `nk pr close … --superseded-by`
+# a Proposal is not yet a registered ItemType. Producers: `arrow-kanban move …
+# --resolution superseded --superseded-by <ID>` and `arrow-kanban pr close … --superseded-by`
 # (both write the supersededBy direction; one direction stored, the inverse derived).
 kb:supersedes a owl:ObjectProperty ;
     rdfs:domain kb:Item ;
@@ -357,33 +359,33 @@ kb:supersededBy a owl:ObjectProperty ;
     rdfs:label "supersededBy" ;
     rdfs:comment "this item/proposal was REPLACED by the target (CH-7173: --resolution superseded requires naming it, so 'what replaced this?' is an edge, never prose)" .
 
-# ── CH-7163: DECISION / OBLIGATION EDGES (the remainder + ruling pairs) ───────────────
+# ── DECISION / OBLIGATION EDGES (the remainder + ruling pairs) ───────────────────────
 # Same root cause as `closes` above and `supersedes` below: a relationship existed
 # conceptually but was stored as PROSE, so something had to grep for it — and the grep
-# could not tell a SUBJECT from a CITATION, while the citation rule (CH-6369) REQUIRES
+# could not tell a SUBJECT from a CITATION, while a citation convention REQUIRES
 # citing ids in prose.
 #
-# THE DISCRIMINATOR (CH-7053's, generalised): does the fact SURVIVE the lifecycle?
+# THE DISCRIMINATOR, generalised: does the fact SURVIVE the lifecycle?
 #   survives -> EDGE (a ruling is true forever; a remainder outlives its PROP)
 #   dies with the interaction -> FIELD (a review CLAIM is transient — deliberately NOT
-#   modelled here; CH-7107 owns it, and an edge there would accumulate garbage)
+#   modelled here; a separate concern owns it, and an edge would accumulate garbage)
 #
 # Domain/range are kb:Item (= ANY) for the same reason `closes` and `supersedes` are, not
 # by oversight: `every_ttl_domain_and_range_names_a_real_item_type` requires a registered
-# ItemType and Proposal is not one. EX-7101 (kanban-v3) tightens these when it is.
+# ItemType and Proposal is not one. Admitting proposals tightens these when it is.
 
 kb:leavesRemainder a owl:ObjectProperty ;
     rdfs:domain kb:Item ;
     rdfs:range kb:Item ;
     owl:inverseOf kb:remainderOf ;
     rdfs:label "leavesRemainder" ;
-    rdfs:comment "this proposal is a PARTIAL pass and the target item carries its outstanding scope. Seeded by the server from the `completes-item:` line at pr.create/pr.edit — so a SEEDED edge is a scraped guess, not an assertion; a human's `remainderOf` (the only direction nk update accepts) is the asserted one. Only ONE direction is stored" .
+    rdfs:comment "this proposal is a PARTIAL pass and the target item carries its outstanding scope. Seeded by the server from the `completes-item:` line at pr.create/pr.edit — so a SEEDED edge is a scraped guess, not an assertion; a human's `remainderOf` (the only direction `arrow-kanban update` accepts) is the asserted one. Only ONE direction is stored" .
 
 kb:remainderOf a owl:ObjectProperty ;
     rdfs:domain kb:Item ;
     rdfs:range kb:Item ;
     owl:inverseOf kb:leavesRemainder ;
-    rdfs:comment "inverse of leavesRemainder: this item carries the outstanding scope of the target partial proposal. This is the direction a HUMAN writes, because nk update resolves its subject through the item store and a proposal is not in it" ;
+    rdfs:comment "inverse of leavesRemainder: this item carries the outstanding scope of the target partial proposal. This is the direction a HUMAN writes, because `arrow-kanban update` resolves its subject through the item store and a proposal is not in it" ;
     rdfs:label "remainderOf" .
 
 kb:ruledBy a owl:ObjectProperty ;
@@ -391,7 +393,7 @@ kb:ruledBy a owl:ObjectProperty ;
     rdfs:range kb:Item ;
     owl:inverseOf kb:scopes ;
     rdfs:label "ruledBy" ;
-    rdfs:comment "this item's scope was set by the target ruling signal. Makes ruling provenance queryable instead of prose in a comment — the shape that let PROP-3955 delete a public module citing a ruling with no durable record (SG-7161). Producer: CH-7172. Only ONE direction is stored" .
+    rdfs:comment "this item's scope was set by the target ruling signal. Makes ruling provenance queryable instead of prose in a comment — the shape that let a proposal delete a public module citing a ruling that had no durable record. Only ONE direction is stored" .
 
 kb:scopes a owl:ObjectProperty ;
     rdfs:domain kb:Item ;
