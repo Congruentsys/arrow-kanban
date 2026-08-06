@@ -20,10 +20,11 @@ A kanban CRUD is not interesting. These are the things this engine does that mos
   transactional outbox, single-writer fencing, fail-closed replica gap detection, and a declared
   staleness bound — each pinned by an acceptance battery you can run yourself
   ([Durability and consistency contract](#durability-and-consistency-contract)).
-- **Data-driven vocabulary.** Item types, lifecycles, WIP policy, and the typed-relationship
-  vocabulary load from a `.ttl` (`ontology/kanban.ttl`). **A new relationship is a data edit, not
-  a code change** — add an `owl:ObjectProperty` with its domain, range, and inverse and the CLI
-  accepts it on the next run.
+- **Data-driven vocabulary.** The typed-relationship vocabulary and item-type classes are
+  declared in a `.ttl` (`ontology/kanban.ttl`, compiled into the binary); lifecycles and WIP
+  policy live in `config.yaml`. **A new relationship is a data edit, not a code change** — add
+  an `owl:ObjectProperty` with its domain, range, and inverse, then rebuild: no Rust changes
+  (measured three separate times on the fleet that runs this).
 - **Typed, directional relationships.** `dependsOn`, `blocks`, `implements`, `validates`,
   `measures`, `partOf`, … so you can ask *which experiment validates this hypothesis?* without
   parsing prose — while the flat dependency columns planning views need are kept as a projection
