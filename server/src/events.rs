@@ -290,7 +290,7 @@ pub struct RelationAddedEvent {
     pub predicate: String,
 }
 
-/// Replay-complete record of a typed-relation REMOVE (CH-7319 — the deletion
+/// Replay-complete record of a typed-relation REMOVE (the deletion
 /// half `relation.add` shipped without).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelationRemovedEvent {

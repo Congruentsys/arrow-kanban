@@ -47,7 +47,7 @@ pub struct Predicate {
 }
 
 /// Type prefixes, matching the ID scheme (`EX-`, `VY-`, `H-`, `EXPR-`, `M-`, `PAPER-`).
-/// One graph-admitted ENTITY CLASS (EX-7101): a kind the vocabulary may
+/// One graph-admitted ENTITY CLASS: a kind the vocabulary may
 /// constrain on (`rdfs:domain`/`rdfs:range`) that is NOT necessarily a board
 /// [`ItemType`]. Loaded from `owl:Class` declarations in the embedded ontology,
 /// exactly the way predicates are — class-addition is DATA-DRIVEN.
@@ -190,7 +190,7 @@ pub fn predicates() -> &'static [Predicate] {
 }
 
 /// The graph-admitted entity classes, loaded from the embedded ontology's
-/// `owl:Class` declarations (EX-7101 Phase 2). FAIL-CLOSED like [`predicates`]:
+/// `owl:Class` declarations. FAIL-CLOSED like [`predicates`]:
 /// a malformed `.ttl` falls back to the BOARD-ONLY compiled set (the
 /// [`ItemType`] classes + the three hierarchy classes) — never an opened
 /// vocabulary, and never extra prefixes.
@@ -245,7 +245,7 @@ fn logical_statements(ttl: &str) -> Result<Vec<String>, String> {
     Ok(statements)
 }
 
-/// Parse the `owl:Class` declarations (EX-7101). Same subset reader posture as
+/// Parse the `owl:Class` declarations. Same subset reader posture as
 /// [`parse_object_properties`]: anything unreadable is an `Err`, which
 /// [`classes`] treats as fail-closed.
 fn parse_entity_classes(ttl: &str) -> Result<Vec<EntityClass>, String> {
@@ -549,8 +549,8 @@ pub fn type_from_id(id: &str) -> Option<&'static str> {
     let prefix = id.split('-').next()?.to_ascii_uppercase();
     // Data-driven classes first consult nothing: the compiled arms below stay
     // authoritative for board types; a prefix they do not know falls through to
-    // the ontology-declared entity classes (EX-7101 — `kb:idPrefix`), so e.g.
-    // PROP-2001 types as `proposal` the moment the `.ttl` declares it.
+    // the ontology-declared entity classes (`kb:idPrefix`), so e.g. a `PROP-`
+    // prefixed id types as `proposal` the moment the `.ttl` declares it.
     let compiled = match prefix.as_str() {
         "EX" | "EXP" => "expedition",
         "VY" | "VOY" => "voyage",
@@ -881,12 +881,12 @@ mod tests {
         assert_eq!(flat_column_for("hasMember"), None);
     }
 
-    /// CH-7273 (fleet regression): the four DECISION/OBLIGATION pairs — closes/closedBy,
+    /// Regression pin: the four DECISION/OBLIGATION pairs — closes/closedBy,
     /// supersedes/supersededBy, leavesRemainder/remainderOf, ruledBy/scopes — exist ONLY
     /// in `kanban.ttl`, not in the compiled fallback, yet validate, look up, and
     /// inverse-resolve exactly like the compiled set. Same acceptance shape as
     /// `partof_membership_pair_is_loaded_from_data_only`, because it guards the same
-    /// property: the vocabulary grows by editing DATA. Pinned per CH-6659 — this test
+    /// property: the vocabulary grows by editing DATA. Pinned so that this test
     /// goes RED when the .ttl blocks are removed, so a green pre-existing suite can
     /// never again read as "the predicates loaded" while they did not.
     #[test]
@@ -906,7 +906,7 @@ mod tests {
             }
             let p = lookup(fwd).unwrap_or_else(|| panic!("'{fwd}' not loaded from kanban.ttl"));
             if fwd == "closes" {
-                // EX-7101 Phase 3: EX-7098's any→any was explicitly provisional
+                // The earlier any→any domain/range was explicitly provisional
                 // ("a Proposal is not a registered ItemType until kanban-v3");
                 // Proposal is registered now, so the real domain applies.
                 assert_eq!(p.domain, &["proposal"], "'closes' is Proposal → Item");
@@ -924,14 +924,14 @@ mod tests {
         }
         // A decision edge validates end-to-end, including a proposal-shaped source id the
         // item store cannot resolve (relations rows are plain Utf8; PROP- is a valid
-        // source). EX-7101: PROP- now prefix-types as `proposal` (kb:idPrefix), so the
+        // source). `PROP-` now prefix-types as `proposal` (kb:idPrefix), so the
         // tightened Proposal→Item domain validates — and a NON-proposal source REFUSES,
-        // which is the enforcement EX-7098 shipped without.
+        // which is the enforcement the provisional edge shipped without.
         assert_eq!(type_from_id("PROP-1"), Some("proposal"));
         assert!(validate_edge("closes", "PROP-1", "proposal", "CH-2", Some("chore")).is_ok());
         assert!(
             validate_edge("closes", "CH-9", "chore", "VY-2", Some("voyage")).is_err(),
-            "a Chore must no longer be able to 'close' a Voyage (the EX-7101 tightening)"
+            "a Chore must no longer be able to 'close' a Voyage (the entity-class tightening)"
         );
         assert!(validate_edge("remainderOf", "CH-3", "chore", "PROP-1", None).is_ok());
         // Loading MORE never opened the vocabulary.
@@ -944,8 +944,8 @@ mod tests {
         }
     }
 
-    /// EX-7101: the entity classes are LOADED FROM DATA — removing the `.ttl`
-    /// class block turns this RED (the CH-6659 pin CLAUDE.md prescribes for every
+    /// The entity classes are LOADED FROM DATA — removing the `.ttl`
+    /// class block turns this RED (the red-first pin prescribed for every
     /// vocabulary addition: a green pre-existing suite proves nothing loaded).
     #[test]
     fn ex7101_entity_classes_are_loaded_from_data_only() {
@@ -1076,7 +1076,7 @@ mod tests {
     /// cross-review agreement).
     #[test]
     fn every_ttl_domain_and_range_names_a_real_item_type() {
-        // EX-7101: the known universe is board ItemTypes ∪ the ontology's own
+        // The known universe is board ItemTypes ∪ the ontology's own
         // declared entity classes — a typo'd class STILL fails (it is declared
         // nowhere), while a declared non-board class (Proposal) is legal.
         let mut known: Vec<&str> = ItemType::DEV

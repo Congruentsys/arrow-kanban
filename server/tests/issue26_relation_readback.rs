@@ -155,7 +155,7 @@ fn show_without_edges_stays_clean() {
     );
 }
 
-/// CH-7319 — the deletion half: `relation.remove` deletes the exact triple, the
+/// The deletion half: `relation.remove` deletes the exact triple, the
 /// removal is READABLE back (query shows it gone), and a nonexistent triple
 /// refuses rather than claiming success. The measured need: a false seeded
 /// PROP-sourced edge was undeletable through every prior surface.
@@ -183,7 +183,7 @@ fn relation_remove_round_trip_and_refusal() {
     assert_eq!(q["count"], 0, "edge must be gone: {q}");
 
     // A nonexistent triple REFUSES — a remove that claims success on nothing
-    // is the false-green shape (the guarded-deleter lesson, CH-7310).
+    // is the false-green shape (the guarded-deleter lesson).
     let rm2 = json(&engine.dispatch(
         "relation.remove",
         br#"{"source_id":"PROP-9001","target_id":"CH-1","predicate":"leavesRemainder"}"#,
@@ -194,8 +194,8 @@ fn relation_remove_round_trip_and_refusal() {
     );
 }
 
-/// CH-7319 durability: the removal survives an engine RELOAD from disk — the
-/// HZ-7179 lesson verbatim (an in-memory assertion cannot fail on a persistence
+/// Durability: the removal survives an engine RELOAD from disk — the
+/// persistence lesson verbatim (an in-memory assertion cannot fail on a persistence
 /// defect, which is precisely why eleven passing tests once missed one).
 #[test]
 fn relation_remove_survives_reload() {
