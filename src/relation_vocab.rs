@@ -47,6 +47,23 @@ pub struct Predicate {
 }
 
 /// Type prefixes, matching the ID scheme (`EX-`, `VY-`, `H-`, `EXPR-`, `M-`, `PAPER-`).
+/// One graph-admitted ENTITY CLASS (EX-7101): a kind the vocabulary may
+/// constrain on (`rdfs:domain`/`rdfs:range`) that is NOT necessarily a board
+/// [`ItemType`]. Loaded from `owl:Class` declarations in the embedded ontology,
+/// exactly the way predicates are — class-addition is DATA-DRIVEN.
+///
+/// `id_prefix` (the optional `kb:idPrefix "PROP"` clause) makes ids of the kind
+/// resolvable by [`type_from_id`], which is what lets an edge constrain on the
+/// class at validation time. A class with no prefix is still a legal
+/// domain/range citizen; its ids just cannot be prefix-typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityClass {
+    /// Lowercased local name (the `validate_edge` comparison form).
+    pub name: &'static str,
+    /// UPPERCASE id prefix (`"PROP"`), when declared.
+    pub id_prefix: Option<&'static str>,
+}
+
 const DEV_ANY: &[&str] = &[];
 const EXPEDITION: &[&str] = &["expedition"];
 const VOYAGE: &[&str] = &["voyage"];
@@ -172,6 +189,97 @@ pub fn predicates() -> &'static [Predicate] {
     &VOCAB
 }
 
+/// The graph-admitted entity classes, loaded from the embedded ontology's
+/// `owl:Class` declarations (EX-7101 Phase 2). FAIL-CLOSED like [`predicates`]:
+/// a malformed `.ttl` falls back to the BOARD-ONLY compiled set (the
+/// [`ItemType`] classes + the three hierarchy classes) — never an opened
+/// vocabulary, and never extra prefixes.
+pub fn classes() -> &'static [EntityClass] {
+    static CLASSES: std::sync::LazyLock<&'static [EntityClass]> =
+        std::sync::LazyLock::new(|| match parse_entity_classes(KANBAN_TTL) {
+            Ok(v) if !v.is_empty() => &*Box::leak(v.into_boxed_slice()),
+            Ok(_) | Err(_) => {
+                eprintln!(
+                    "warning: kanban.ttl yielded no owl:Class declarations (or failed to parse) — \
+                     using the compiled board-only class set"
+                );
+                let mut fallback: Vec<EntityClass> = ItemType::DEV
+                    .iter()
+                    .chain(ItemType::RESEARCH.iter())
+                    .map(|t| EntityClass {
+                        name: t.as_str(),
+                        id_prefix: None,
+                    })
+                    .collect();
+                for hierarchy in ["item", "devitem", "researchitem"] {
+                    fallback.push(EntityClass {
+                        name: hierarchy,
+                        id_prefix: None,
+                    });
+                }
+                &*Box::leak(fallback.into_boxed_slice())
+            }
+        });
+    &CLASSES
+}
+
+/// Reassemble logical Turtle statements from physical lines (shared by the
+/// predicate and class parsers — one reading of the file format, not two).
+fn logical_statements(ttl: &str) -> Result<Vec<String>, String> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    for raw in ttl.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        current.push(' ');
+        current.push_str(line);
+        if line == "." || line.ends_with(" .") {
+            statements.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.trim().is_empty() {
+        return Err("unterminated statement at end of file".to_string());
+    }
+    Ok(statements)
+}
+
+/// Parse the `owl:Class` declarations (EX-7101). Same subset reader posture as
+/// [`parse_object_properties`]: anything unreadable is an `Err`, which
+/// [`classes`] treats as fail-closed.
+fn parse_entity_classes(ttl: &str) -> Result<Vec<EntityClass>, String> {
+    let mut out = Vec::new();
+    for stmt in logical_statements(ttl)? {
+        let stmt = stmt.trim().trim_end_matches('.').trim();
+        let mut clauses = split_outside_quotes(stmt, ';').into_iter();
+        let head = clauses.next().unwrap_or("").trim();
+        let subject = head.split_whitespace().next().unwrap_or("");
+        if !subject.starts_with("kb:") || !head.contains("owl:Class") {
+            continue;
+        }
+        let local = kb_local(subject)?;
+        let mut id_prefix = None;
+        for clause in clauses {
+            let clause = clause.trim();
+            if clause.is_empty() {
+                continue;
+            }
+            let (pred, rest) = clause
+                .split_once(char::is_whitespace)
+                .ok_or_else(|| format!("bad clause '{clause}' on kb:{local}"))?;
+            if pred == "kb:idPrefix" {
+                id_prefix = Some(leak_str(quoted(rest)?.to_ascii_uppercase()));
+            }
+        }
+        out.push(EntityClass {
+            name: leak_str(local.to_ascii_lowercase()),
+            id_prefix,
+        });
+    }
+    Ok(out)
+}
+
 fn leak_str(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
 }
@@ -245,23 +353,7 @@ fn split_outside_quotes(s: &str, sep: char) -> Vec<&str> {
 /// is an `Err` — which [`predicates`] treats as fail-closed, never as "accept
 /// everything".
 fn parse_object_properties(ttl: &str) -> Result<Vec<Predicate>, String> {
-    // Reassemble logical statements from physical lines.
-    let mut statements = Vec::new();
-    let mut current = String::new();
-    for raw in ttl.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        current.push(' ');
-        current.push_str(line);
-        if line == "." || line.ends_with(" .") {
-            statements.push(std::mem::take(&mut current));
-        }
-    }
-    if !current.trim().is_empty() {
-        return Err("unterminated statement at end of file".to_string());
-    }
+    let statements = logical_statements(ttl)?;
 
     let mut out: Vec<Predicate> = Vec::new();
     for stmt in &statements {
@@ -455,7 +547,11 @@ pub fn flat_column_for(predicate: &str) -> Option<&'static str> {
 /// this store cannot resolve (e.g. a cross-board research item).
 pub fn type_from_id(id: &str) -> Option<&'static str> {
     let prefix = id.split('-').next()?.to_ascii_uppercase();
-    Some(match prefix.as_str() {
+    // Data-driven classes first consult nothing: the compiled arms below stay
+    // authoritative for board types; a prefix they do not know falls through to
+    // the ontology-declared entity classes (EX-7101 — `kb:idPrefix`), so e.g.
+    // PROP-2001 types as `proposal` the moment the `.ttl` declares it.
+    let compiled = match prefix.as_str() {
         "EX" | "EXP" => "expedition",
         "VY" | "VOY" => "voyage",
         "CA" => "campaign",
@@ -469,8 +565,15 @@ pub fn type_from_id(id: &str) -> Option<&'static str> {
         "PAPER" => "paper",
         "LIT" => "literature",
         "IDEA" => "idea",
-        _ => return None,
-    })
+        _ => "",
+    };
+    if !compiled.is_empty() {
+        return Some(compiled);
+    }
+    classes()
+        .iter()
+        .find(|c| c.id_prefix.is_some_and(|p| p == prefix))
+        .map(|c| c.name)
 }
 
 /// Best-effort item type for an ID: the store's answer if it has one, else the prefix.
@@ -802,17 +905,34 @@ mod tests {
                 );
             }
             let p = lookup(fwd).unwrap_or_else(|| panic!("'{fwd}' not loaded from kanban.ttl"));
-            assert_eq!(p.domain, &[] as &[&str], "'{fwd}' is any -> any (kb:Item)");
-            assert_eq!(p.range, &[] as &[&str]);
+            if fwd == "closes" {
+                // EX-7101 Phase 3: EX-7098's any→any was explicitly provisional
+                // ("a Proposal is not a registered ItemType until kanban-v3");
+                // Proposal is registered now, so the real domain applies.
+                assert_eq!(p.domain, &["proposal"], "'closes' is Proposal → Item");
+                assert_eq!(p.range, &[] as &[&str]);
+            } else {
+                assert_eq!(p.domain, &[] as &[&str], "'{fwd}' is any -> any (kb:Item)");
+                assert_eq!(p.range, &[] as &[&str]);
+            }
             assert_eq!(p.inverse, Some(inv), "'{fwd}' names its inverse");
             let q = lookup(inv).unwrap_or_else(|| panic!("'{inv}' not loaded from kanban.ttl"));
             assert_eq!(q.inverse, Some(fwd), "'{inv}' points back at '{fwd}'");
+            if fwd == "closes" {
+                assert_eq!(q.range, &["proposal"], "'closedBy' range is Proposal");
+            }
         }
         // A decision edge validates end-to-end, including a proposal-shaped source id the
         // item store cannot resolve (relations rows are plain Utf8; PROP- is a valid
-        // source). The source TYPE is unresolvable for a proposal, so validation runs
-        // with the neutral any-type posture the kb:Item domain grants.
-        assert!(validate_edge("closes", "PROP-1", "chore", "CH-2", Some("chore")).is_ok());
+        // source). EX-7101: PROP- now prefix-types as `proposal` (kb:idPrefix), so the
+        // tightened Proposal→Item domain validates — and a NON-proposal source REFUSES,
+        // which is the enforcement EX-7098 shipped without.
+        assert_eq!(type_from_id("PROP-1"), Some("proposal"));
+        assert!(validate_edge("closes", "PROP-1", "proposal", "CH-2", Some("chore")).is_ok());
+        assert!(
+            validate_edge("closes", "CH-9", "chore", "VY-2", Some("voyage")).is_err(),
+            "a Chore must no longer be able to 'close' a Voyage (the EX-7101 tightening)"
+        );
         assert!(validate_edge("remainderOf", "CH-3", "chore", "PROP-1", None).is_ok());
         // Loading MORE never opened the vocabulary.
         assert!(validate_edge("closesish", "PROP-1", "chore", "CH-2", None).is_err());
@@ -822,6 +942,54 @@ mod tests {
             assert_eq!(flat_column_for(fwd), None);
             assert_eq!(flat_column_for(inv), None);
         }
+    }
+
+    /// EX-7101: the entity classes are LOADED FROM DATA — removing the `.ttl`
+    /// class block turns this RED (the CH-6659 pin CLAUDE.md prescribes for every
+    /// vocabulary addition: a green pre-existing suite proves nothing loaded).
+    #[test]
+    fn ex7101_entity_classes_are_loaded_from_data_only() {
+        // None of the five is a board ItemType — they must come from the ontology.
+        for name in ["proposal", "comment", "run", "experimentrun", "ciresult"] {
+            assert!(
+                classes().iter().any(|c| c.name == name),
+                "'{name}' not loaded from kanban.ttl — the class block is missing or unparsed"
+            );
+            assert!(
+                !ItemType::DEV
+                    .iter()
+                    .chain(ItemType::RESEARCH.iter())
+                    .any(|t| t.as_str() == name),
+                "'{name}' must NOT be a board ItemType — EntityClass is the non-board register"
+            );
+        }
+        // Prefix resolution is data-driven: PROP/CMT come from kb:idPrefix, with the
+        // compiled board arms untouched and authoritative first.
+        assert_eq!(type_from_id("PROP-2001"), Some("proposal"));
+        assert_eq!(type_from_id("CMT-CH-1-99"), Some("comment"));
+        assert_eq!(
+            type_from_id("EX-1"),
+            Some("expedition"),
+            "compiled arms unchanged"
+        );
+        assert_eq!(
+            type_from_id("WAT-1"),
+            None,
+            "unknown prefixes still resolve to None"
+        );
+        // The FK vocabulary (Phase 4) is loaded and correctly constrained.
+        let c = lookup("commentOn").expect("commentOn loaded");
+        assert_eq!(c.domain, &["comment"]);
+        let e = lookup("evaluates").expect("evaluates loaded");
+        assert_eq!(
+            (e.domain, e.range),
+            (&["ciresult"] as &[&str], &["proposal"] as &[&str])
+        );
+        let t = lookup("transitions").expect("transitions loaded");
+        assert_eq!(t.domain, &["run"]);
+        // And loading more never opened the vocabulary or the class set.
+        assert!(validate_edge("commentOn", "CH-1", "chore", "CH-2", Some("chore")).is_err());
+        assert!(classes().iter().all(|c| c.name != "watnot"));
     }
 
     /// The live vocabulary IS the .ttl-loaded one (not the fallback): the loader
@@ -908,11 +1076,15 @@ mod tests {
     /// cross-review agreement).
     #[test]
     fn every_ttl_domain_and_range_names_a_real_item_type() {
-        let known: Vec<&str> = ItemType::DEV
+        // EX-7101: the known universe is board ItemTypes ∪ the ontology's own
+        // declared entity classes — a typo'd class STILL fails (it is declared
+        // nowhere), while a declared non-board class (Proposal) is legal.
+        let mut known: Vec<&str> = ItemType::DEV
             .iter()
             .chain(ItemType::RESEARCH.iter())
             .map(|t| t.as_str())
             .collect();
+        known.extend(classes().iter().map(|c| c.name));
         assert!(
             known.contains(&"campaign"),
             "Campaign must be a board type (EX-6249) — the allowlist era is over"

@@ -261,8 +261,71 @@ kb:hasMember a owl:ObjectProperty ;
 # the relations table already accepts a PROP- source_id (source_id/target_id are plain
 # Utf8, schema.rs:113-126) — so this needs no schema change.
 
+# ---------------------------------------------------------------------------
+# Graph-admitted ENTITY CLASSES beyond the board (EX-7101).
+#
+# THE RULING (EX-7101 Phase 1, recorded where it binds): Proposal — and Comment,
+# Run, ExperimentRun, CiResult — are DISTINCT KINDS, not ItemTypes. Evidence:
+# each has its own store and schema (ProposalStore; comments/runs schemas), its
+# own id namespace (PROP-2000+, CMT-*), and either a DIFFERENT lifecycle
+# (proposal: open/approved/merged/closed — not board statuses) or NONE (a
+# comment has no lifecycle at all). Admitting them as ItemTypes would put them
+# on board surfaces (list/move/boards) that deliberately exclude them. ItemType
+# remains exactly "kinds that live on boards"; EntityClass is "kinds the GRAPH
+# knows". Class-addition is DATA-DRIVEN like predicates: declare the class here
+# (`kb:idPrefix` makes its ids prefix-resolvable); no Rust edit per class.
+# ---------------------------------------------------------------------------
+
+kb:idPrefix a owl:AnnotationProperty ;
+    rdfs:label "idPrefix" ;
+    rdfs:comment "UPPERCASE id prefix for ids of this class (e.g. PROP), letting the edge validator type an id the item store cannot resolve. Optional: a class with no prefix is a legal domain/range citizen whose ids simply cannot be prefix-typed." .
+
+kb:Proposal a owl:Class ;
+    kb:idPrefix "PROP" ;
+    rdfs:label "Proposal" ;
+    rdfs:comment "A graph-native code-review proposal (PROP-2000+; ProposalStore). Distinct kind, NOT a board ItemType: its lifecycle is open/approved/merged/closed, and it is a valid --relate TARGET but never an nk-update SUBJECT." .
+
+kb:Comment a owl:Class ;
+    kb:idPrefix "CMT" ;
+    rdfs:label "Comment" ;
+    rdfs:comment "An item comment (CMT-*). Statement-shaped: no lifecycle. Admitted so comment->subject can be a typed edge instead of an implicit foreign key (EX-7101 Phase 4)." .
+
+kb:Run a owl:Class ;
+    rdfs:label "Run" ;
+    rdfs:comment "A status-history transition record (runs schema). No public id prefix today; admitted for domain/range use by kb:transitions." .
+
+kb:ExperimentRun a owl:Class ;
+    rdfs:label "ExperimentRun" ;
+    rdfs:comment "An experiment execution record (experiment_runs schema)." .
+
+kb:CiResult a owl:Class ;
+    rdfs:label "CiResult" ;
+    rdfs:comment "A CI/check result attached to a proposal (CiResultStore)." .
+
+# EX-7101 Phase 4 vocabulary — the FK relationships, typed. ADD is data-only;
+# USE (producers materializing these edges) is separate ordinary work, filed as
+# its own item — the measured ADD/USE split (CH-7163: 0 production Rust to add,
+# normal Rust to wire).
+kb:commentOn a owl:ObjectProperty ;
+    rdfs:domain kb:Comment ;
+    rdfs:range kb:Item ;
+    rdfs:label "commentOn" ;
+    rdfs:comment "this comment is on the target item (today an implicit FK column; typed so graph consumers can stop grepping). Producer: follow-on item." .
+
+kb:transitions a owl:ObjectProperty ;
+    rdfs:domain kb:Run ;
+    rdfs:range kb:Item ;
+    rdfs:label "transitions" ;
+    rdfs:comment "this run record transitions the target item (status history FK, typed). Producer: follow-on item." .
+
+kb:evaluates a owl:ObjectProperty ;
+    rdfs:domain kb:CiResult ;
+    rdfs:range kb:Proposal ;
+    rdfs:label "evaluates" ;
+    rdfs:comment "this CI result evaluates the target proposal (FK, typed). Producer: follow-on item." .
+
 kb:closes a owl:ObjectProperty ;
-    rdfs:domain kb:Item ;
+    rdfs:domain kb:Proposal ;
     rdfs:range kb:Item ;
     owl:inverseOf kb:closedBy ;
     rdfs:label "closes" ;
@@ -270,7 +333,7 @@ kb:closes a owl:ObjectProperty ;
 
 kb:closedBy a owl:ObjectProperty ;
     rdfs:domain kb:Item ;
-    rdfs:range kb:Item ;
+    rdfs:range kb:Proposal ;
     owl:inverseOf kb:closes ;
     rdfs:label "closedBy" ;
     rdfs:comment "the target proposal closes this item (derived inverse of closes; stored one way only)" .
