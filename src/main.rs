@@ -985,10 +985,10 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 for (pred, target) in &edges {
                     rel_store.add_relation(&id, target, pred)?;
                 }
-                persist::save_relations(&root, &rel_store)?;
+                save_relations_noting(&root, &rel_store)?;
             }
 
-            persist::save_store(&root, &store)?;
+            save_store_noting(&root, &store)?;
             println!("Created {id}: {title}");
             for (pred, target) in &edges {
                 println!("  {id} -{pred}-> {target}");
@@ -1131,7 +1131,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 store.update_closed_by(&id, Some(cb))?;
             }
 
-            persist::save_store(&root, &store)?;
+            save_store_noting(&root, &store)?;
 
             let mut msg = if force {
                 format!("Moved {id} from {old} to {status} (forced)")
@@ -1154,7 +1154,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 )
                 .into());
             }
-            persist::save_store(&root, &store)?;
+            save_store_noting(&root, &store)?;
             println!(
                 "Ratified {phase}: stripped pending-ratification from {} item(s); started {} voyage(s){}",
                 report.stripped.len(),
@@ -1255,7 +1255,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                         println!("  (no {id} -{pred}-> {target} edge to remove)");
                     }
                 }
-                persist::save_relations(&root, &rel_store)?;
+                save_relations_noting(&root, &rel_store)?;
                 if !add.is_empty() {
                     updated.push("relationships_added");
                 }
@@ -1269,7 +1269,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                     "No fields specified to update. Use --title, --priority, --assign, --tags, --body, --body-file, --related, --depends-on, --relate, or --unrelate."
                 );
             } else {
-                persist::save_store(&root, &store)?;
+                save_store_noting(&root, &store)?;
                 println!("Updated {id}: {}", updated.join(", "));
             }
         }
@@ -1280,7 +1280,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
 
             // Record comment as a run entry
             store.add_comment(&id, &text, None)?;
-            persist::save_store(&root, &store)?;
+            save_store_noting(&root, &store)?;
             println!("Comment added to {id}");
         }
 
@@ -2031,8 +2031,8 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 println!("Dry run — no changes saved.");
             } else {
                 let (migrated_store, rel_store) = result.into_stores()?;
-                persist::save_store(&root, &migrated_store)?;
-                persist::save_relations(&root, &rel_store)?;
+                save_store_noting(&root, &migrated_store)?;
+                save_relations_noting(&root, &rel_store)?;
                 println!("Migration saved to .arrow-kanban/");
             }
         }
@@ -2048,7 +2048,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 HddCommands::Paper { title, tags } => {
                     let result =
                         arrow_kanban::create_paper(&mut store, &title, parse_tags(tags), vec![])?;
-                    persist::save_store(&root, &store)?;
+                    save_store_noting(&root, &store)?;
                     println!("Created {}: {}", result.id, title);
                 }
                 HddCommands::Hypothesis { title, paper, tags } => {
@@ -2060,8 +2060,8 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                         parse_tags(tags),
                         vec![],
                     )?;
-                    persist::save_store(&root, &store)?;
-                    persist::save_relations(&root, &rel_store)?;
+                    save_store_noting(&root, &store)?;
+                    save_relations_noting(&root, &rel_store)?;
                     println!(
                         "Created {}: {} (linked to PAPER-{})",
                         result.id, title, paper
@@ -2080,8 +2080,8 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                         parse_tags(tags),
                         vec![],
                     )?;
-                    persist::save_store(&root, &store)?;
-                    persist::save_relations(&root, &rel_store)?;
+                    save_store_noting(&root, &store)?;
+                    save_relations_noting(&root, &rel_store)?;
                     println!(
                         "Created {}: {} (linked to {})",
                         result.id, title, hypothesis
@@ -2100,14 +2100,14 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                         parse_tags(tags),
                         vec![],
                     )?;
-                    persist::save_store(&root, &store)?;
-                    persist::save_relations(&root, &rel_store)?;
+                    save_store_noting(&root, &store)?;
+                    save_relations_noting(&root, &rel_store)?;
                     println!("Created {}: {}", result.id, title);
                 }
                 HddCommands::Idea { title, tags } => {
                     let result =
                         arrow_kanban::create_idea(&mut store, &title, parse_tags(tags), vec![])?;
-                    persist::save_store(&root, &store)?;
+                    save_store_noting(&root, &store)?;
                     println!("Created {}: {}", result.id, title);
                 }
                 HddCommands::Literature { title, tags } => {
@@ -2117,7 +2117,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                         parse_tags(tags),
                         vec![],
                     )?;
-                    persist::save_store(&root, &store)?;
+                    save_store_noting(&root, &store)?;
                     println!("Created {}: {}", result.id, title);
                 }
                 HddCommands::Validate => {
@@ -2181,7 +2181,7 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
             // Verify item exists
             let _item = store.get_item(&id)?;
             store.update_rank(&id, Some(rank as i32))?;
-            persist::save_store(&root, &store)?;
+            save_store_noting(&root, &store)?;
             println!("Ranked {id} → {rank}");
         }
 
@@ -2387,6 +2387,193 @@ fn init_notice(theme: &str, template_count: usize) -> String {
 }
 
 /// Recursively copy a directory.
+/// Whether the board directory is tracked in git AND currently has uncommitted
+/// changes. Pure over its two inputs so the DECISION is testable without a repo;
+/// the git probing lives in [`board_git_state`].
+fn board_needs_commit_notice(tracked: bool, dirty: bool) -> bool {
+    tracked && dirty
+}
+
+/// The one-line notice printed after a write when the board is committed to git.
+///
+/// Committing `.arrow-kanban/` is a supported choice (see the README's
+/// commit-vs-ignore fork), but it has a consequence users meet at the worst
+/// moment: git refuses a branch switch while the board has uncommitted writes,
+/// and the reflex that clears that refusal — `git stash`, `git checkout -- .` —
+/// replaces the live board with the branch's stale copy. The README says so; a
+/// reader who never opens it still meets the refusal. So say it where the write
+/// happens.
+fn board_notice_line() -> &'static str {
+    "note: .arrow-kanban/ is tracked in git and has uncommitted changes — commit them before \
+switching branches; `git stash` would stash the live board and leave you the branch's older copy."
+}
+
+/// `(tracked, dirty)` for the board directory, read from git.
+///
+/// Split out from the notice so the PROBE ITSELF is testable against a real
+/// repository. A truth-table test over the decision alone would pass even if
+/// these two git invocations were wrong, and the notice would then never fire —
+/// silence being indistinguishable from correctness is the failure this split
+/// exists to prevent.
+///
+/// Both probes fail CLOSED to `false`: no git, not a repository, or a non-zero
+/// exit yields no notice rather than an error.
+fn board_git_state(root: &std::path::Path) -> (bool, bool) {
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .ok()?;
+        if out.status.success() {
+            String::from_utf8(out.stdout).ok()
+        } else {
+            None
+        }
+    };
+    let tracked = git(&["ls-files", "--", ".arrow-kanban"]).is_some_and(|o| !o.trim().is_empty());
+    let dirty = git(&["status", "--porcelain", "--", ".arrow-kanban"])
+        .is_some_and(|o| !o.trim().is_empty());
+    (tracked, dirty)
+}
+
+/// Probe git and print [`board_notice_line`] at most ONCE per process.
+///
+/// Deliberately silent unless BOTH conditions hold. A board that is ignored (the
+/// other side of the fork) or clean must print nothing, or the notice is trained
+/// away before the one time it matters.
+fn note_tracked_board(root: &std::path::Path) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SAID: AtomicBool = AtomicBool::new(false);
+    if SAID.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let (tracked, dirty) = board_git_state(root);
+    if board_needs_commit_notice(tracked, dirty) {
+        eprintln!("{}", board_notice_line());
+    }
+}
+
+/// `persist::save_store` plus the tracked-board notice. Every CLI write goes
+/// through one of these two wrappers, so the notice fires by construction rather
+/// than from a list of mutating commands that a new command could silently miss.
+fn save_store_noting(
+    root: &std::path::Path,
+    store: &arrow_kanban::crud::KanbanStore,
+) -> Result<(), Box<dyn std::error::Error>> {
+    persist::save_store(root, store)?;
+    note_tracked_board(root);
+    Ok(())
+}
+
+/// `persist::save_relations` plus the tracked-board notice.
+fn save_relations_noting(
+    root: &std::path::Path,
+    relations: &arrow_kanban::relations::RelationsStore,
+) -> Result<(), Box<dyn std::error::Error>> {
+    persist::save_relations(root, relations)?;
+    note_tracked_board(root);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tracked_board_notice_tests {
+    use super::*;
+
+    /// The decision truth table. Both sides of the commit-vs-ignore fork are
+    /// legitimate, so only ONE of the four states may speak.
+    #[test]
+    fn only_a_tracked_and_dirty_board_gets_a_notice() {
+        assert!(
+            board_needs_commit_notice(true, true),
+            "tracked + dirty speaks"
+        );
+        assert!(
+            !board_needs_commit_notice(true, false),
+            "tracked + clean is silent — nothing to commit before switching"
+        );
+        assert!(
+            !board_needs_commit_notice(false, true),
+            "an IGNORED board is the other side of the fork and must never be nagged"
+        );
+        assert!(!board_needs_commit_notice(false, false), "neither: silent");
+    }
+
+    /// The line has to carry the hazard, not just the fact. 'commit it' alone
+    /// leaves the reader to reach for the reflex that destroys the board.
+    #[test]
+    fn the_notice_names_the_stash_hazard_and_not_only_the_state() {
+        let n = board_notice_line();
+        assert!(n.contains(".arrow-kanban/"), "names the directory: {n}");
+        assert!(n.contains("tracked in git"), "names why it applies: {n}");
+        assert!(n.contains("commit"), "gives the remedy: {n}");
+        assert!(n.contains("switching branches"), "names when it bites: {n}");
+        assert!(
+            n.contains("git stash"),
+            "names the reflex that loses the live board: {n}"
+        );
+    }
+
+    /// The PROBE, against a real repository — a truth-table test alone would pass
+    /// with both git invocations wrong, and the notice would never fire.
+    #[test]
+    fn the_probe_reads_tracked_and_dirty_off_a_real_repo() {
+        let tmp = std::env::temp_dir().join(format!("ak-board-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join(".arrow-kanban")).expect("mkdir");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&tmp)
+                .args(args)
+                .output()
+                .expect("git")
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@t"]);
+        git(&["config", "user.name", "t"]);
+
+        std::fs::write(tmp.join(".arrow-kanban/items.parquet"), b"v1").expect("write");
+        assert_eq!(
+            board_git_state(&tmp),
+            (false, true),
+            "untracked board: not tracked, and it does show as a change"
+        );
+
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "board"]);
+        assert_eq!(
+            board_git_state(&tmp),
+            (true, false),
+            "committed board: tracked and clean"
+        );
+
+        std::fs::write(tmp.join(".arrow-kanban/items.parquet"), b"v2").expect("write");
+        assert_eq!(
+            board_git_state(&tmp),
+            (true, true),
+            "tracked board with an uncommitted write — the one state that speaks"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Outside a repository the probe must not error or invent a state.
+    #[test]
+    fn the_probe_is_silent_outside_a_git_repository() {
+        let tmp = std::env::temp_dir().join(format!("ak-board-norepo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).expect("mkdir");
+        assert_eq!(
+            board_git_state(&tmp),
+            (false, false),
+            "no repo: fail closed"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
 fn copy_dir_recursive(
     src: &std::path::Path,
     dest: &std::path::Path,
