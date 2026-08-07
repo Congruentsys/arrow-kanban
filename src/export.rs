@@ -272,7 +272,7 @@ pub fn export_json(batches: &[RecordBatch]) -> String {
                 rank_col.value(i).to_string()
             };
 
-            // CH-7426 (nusy): `resolution`/`closed_by` were absent from this projection
+            // `resolution`/`closed_by` were absent from this projection
             // entirely, so a closure audit reading the JSON saw None for every item —
             // including resolved ones — and an absent field is indistinguishable from an
             // unset one. Null-safe like `assignee`: null when unset, never omitted.
@@ -1504,7 +1504,7 @@ mod tests {
         assert!(json.contains("\"priority\":\"critical\""));
     }
 
-    /// CH-7426 (nusy): `resolution`/`closed_by` were ABSENT from the JSON projection,
+    /// `resolution`/`closed_by` were ABSENT from the JSON projection,
     /// so a closure audit reading it saw None for every item — including resolved ones.
     /// Both directions: a closed item carries the values; an open item carries explicit
     /// nulls (present-but-null, never omitted — absent is indistinguishable from unset).
