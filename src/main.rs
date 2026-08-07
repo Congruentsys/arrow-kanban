@@ -2361,7 +2361,7 @@ fn run_init(root: &std::path::Path, theme: &str) -> Result<(), Box<dyn std::erro
 /// binary — the existing init tests simulate the directory structure and never
 /// invoke it, so nothing could assert on what the user is actually told.
 ///
-/// CH-7474: `init` leaves `?? .arrow-kanban/` in a stranger's `git status` and says
+/// `init` leaves `?? .arrow-kanban/` in a stranger's `git status` and says
 /// nothing about it. The user then has to make a decision they have not been told
 /// exists, and BOTH answers are defensible — which is exactly why silence is the
 /// wrong default. State the fork at `init`, because that is the moment the user
@@ -3415,7 +3415,7 @@ fn build_status_map(
 
 #[cfg(test)]
 mod ch7474_init_notice_tests {
-    //! CH-7474: `init` must NAME the commit-vs-ignore fork, because it is the moment
+    //! `init` must NAME the commit-vs-ignore fork, because it is the moment
     //! the user meets `?? .arrow-kanban/`. Asserted POSITIVELY — a negative check
     //! ("says nothing wrong") passes vacuously the moment the wording changes.
     use super::*;
