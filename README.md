@@ -118,6 +118,37 @@ A board lives in `./.arrow-kanban/`:
   _commits.json        # graph-native commit log (audit trail)
 ```
 
+### Should you commit `.arrow-kanban/`?
+
+`init` does **not** write a `.gitignore` entry, so the board shows up as untracked:
+
+```
+$ arrow-kanban init
+$ git status --porcelain
+?? .arrow-kanban/
+```
+
+That is deliberate. Both answers are defensible, and editing your `.gitignore` on your behalf
+would silently pick one:
+
+| | commit it | ignore it |
+|---|---|---|
+| the board is | shared and versioned with the repo | local to your machine |
+| a fresh clone | starts with the board | starts empty |
+| switching branches | **changes what the board shows** | board is unaffected |
+| git object growth | **~20 KiB per commit** for a small board | none |
+
+The measured figure is for a small board. Growth scales with store size rather than with commit
+count, so a large board costs proportionally more — measure your own with
+`git count-objects -vH` before and after a commit rather than assuming either extreme.
+
+**If you commit it,** be aware the board becomes branch-dependent: `git checkout` changes the
+board's contents, and uncommitted board writes will make git refuse the checkout. Commit or
+finish your board changes before switching branches — and note that `git stash -u` in that state
+stashes the live store.
+
+**If you ignore it,** add `.arrow-kanban/` to `.gitignore` yourself.
+
 ## Arrow compatibility policy
 
 **This crate hands `RecordBatch` values across its API boundary, so its Arrow major version is
