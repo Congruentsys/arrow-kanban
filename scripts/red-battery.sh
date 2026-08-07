@@ -151,6 +151,15 @@ mutate_expect_red "closed-crate/NuSy ref -> structural_core_only_acceptance.rs (
 mutate_expect_red "closed-crate/NuSy ref -> replica.rs (new read-side src)"                 server/src/replica.rs                     $'\n// pulls nusy-graph-review internals\n'
 mutate_expect_red "closed-crate/NuSy ref -> replica_gap_acceptance.rs (new PR-4 test)"      server/tests/replica_gap_acceptance.rs    $'\n// pulls nusy-graph-review internals\n'
 
+# issue #47 — the SMUGGLE class: the literal string "export-gate" on the same line used to
+# CONTENT-exempt it from the scan, so a tracker ref (or closed vocab) rode past the gate by
+# mentioning the gate's own name. The exclusion is path-shaped now (scripts/ is simply not
+# scanned); these two vectors pin that a smuggle attempt goes RED on the two most
+# safety-relevant scans. Found live: CH-7352's probe comment contained "export-gate" and the
+# gate reported CLEAN on a deliberate violation (see issue #47).
+mutate_expect_red "SMUGGLE: tracker ref + literal 'export-gate' on one line"  server/src/lib.rs $'\n// deliberate internal tracker reference EX-9999 (export-gate)\n'
+mutate_expect_red "SMUGGLE: closed vocab + literal 'export-gate' on one line" server/src/lib.rs $'\n// certifiability_class plane-cognition (export-gate)\n'
+
 # final: tree restored + gate green again.
 "${GATE[@]}" >/dev/null 2>&1 || fail "gate is not green after restore — a mutation leaked."
 echo "✅ [red-battery] all $INJECTIONS injections RED; clean tree green; positive controls hold."
