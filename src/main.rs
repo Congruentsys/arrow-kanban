@@ -2353,11 +2353,37 @@ fn run_init(root: &std::path::Path, theme: &str) -> Result<(), Box<dyn std::erro
     // Install Claude Code skills (idempotent — updates existing)
     install_claude_skills(root)?;
 
-    println!(
-        "Initialized arrow-kanban in .arrow-kanban/ (theme: {theme}, {} templates)",
-        types.len()
-    );
+    println!("{}", init_notice(theme, types.len()));
     Ok(())
+}
+
+/// The notice `init` prints. Pure so the WORDING is testable without running the
+/// binary — the existing init tests simulate the directory structure and never
+/// invoke it, so nothing could assert on what the user is actually told.
+///
+/// `init` leaves `?? .arrow-kanban/` in a stranger's `git status` and says
+/// nothing about it. The user then has to make a decision they have not been told
+/// exists, and BOTH answers are defensible — which is exactly why silence is the
+/// wrong default. State the fork at `init`, because that is the moment the user
+/// sees the untracked directory and forms a theory about it.
+///
+/// Deliberately does NOT write a `.gitignore` entry: editing a user's `.gitignore`
+/// on their behalf is a larger intrusion than the dirty tree, and it silently picks
+/// one side of a real fork. Say it; do not decide it.
+fn init_notice(theme: &str, template_count: usize) -> String {
+    format!(
+        "Initialized arrow-kanban in .arrow-kanban/ (theme: {theme}, {template_count} templates)\n\
+         \n\
+         `.arrow-kanban/` is NOT ignored by git, so it will show as untracked. Two options:\n\
+         \n\
+         \x20 * COMMIT it  — the board is shared and versioned with the repo\n\
+         \x20               (~20 KiB of git objects per commit for a small board),\n\
+         \x20               and the board then follows the branch you are on.\n\
+         \x20 * IGNORE it  — add `.arrow-kanban/` to .gitignore to keep the board\n\
+         \x20               local-only; a fresh clone starts empty.\n\
+         \n\
+         arrow-kanban will not edit .gitignore for you."
+    )
 }
 
 /// Recursively copy a directory.
@@ -3385,6 +3411,47 @@ fn build_status_map(
         }
     }
     map
+}
+
+#[cfg(test)]
+mod ch7474_init_notice_tests {
+    //! `init` must NAME the commit-vs-ignore fork, because it is the moment
+    //! the user meets `?? .arrow-kanban/`. Asserted POSITIVELY — a negative check
+    //! ("says nothing wrong") passes vacuously the moment the wording changes.
+    use super::*;
+
+    #[test]
+    fn init_notice_names_both_sides_of_the_fork_and_declines_to_decide() {
+        let n = init_notice("nautical", 13);
+        assert!(
+            n.contains("Initialized arrow-kanban in .arrow-kanban/"),
+            "keeps the original line: {n}"
+        );
+        assert!(
+            n.contains("nautical") && n.contains("13 templates"),
+            "keeps theme + count: {n}"
+        );
+        assert!(
+            n.contains("NOT ignored"),
+            "says the directory is untracked: {n}"
+        );
+        assert!(n.contains("COMMIT it"), "names the commit side: {n}");
+        assert!(n.contains("IGNORE it"), "names the ignore side: {n}");
+        assert!(
+            n.contains("20 KiB"),
+            "quotes the measured per-commit cost: {n}"
+        );
+        assert!(
+            n.contains("will not edit .gitignore"),
+            "states that it does not edit .gitignore on the user's behalf: {n}"
+        );
+    }
+
+    #[test]
+    fn init_notice_reports_the_theme_it_was_given() {
+        assert!(init_notice("software", 7).contains("software"));
+        assert!(init_notice("hdd", 6).contains("hdd"));
+    }
 }
 
 #[cfg(test)]
