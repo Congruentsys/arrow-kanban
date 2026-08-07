@@ -199,6 +199,13 @@ Stated so you can tell what you still have to build:
   exists to keep it that way. Your vocabulary goes in an extension, not in the engine.
 - **No opinion about who may write.** `WriterLease` gives you fencing; the policy is yours.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — start with the export-gate section:
+two authoring rules (no upstream brand terms, no internal tracker IDs in
+comments) that CI enforces and that surprise most new contributors. Run
+`bash scripts/export-gate.sh` locally before pushing.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
