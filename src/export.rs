@@ -215,6 +215,8 @@ pub fn export_json(batches: &[RecordBatch]) -> String {
         let statuses = col_str(batch, items_col::STATUS);
         let priorities = col_str(batch, items_col::PRIORITY);
         let assignees = col_str(batch, items_col::ASSIGNEE);
+        let resolutions = col_str(batch, items_col::RESOLUTION);
+        let closed_bys = col_str(batch, items_col::CLOSED_BY);
         let bodies = col_str(batch, items_col::BODY);
         let deleted = batch
             .column(items_col::DELETED)
@@ -270,8 +272,12 @@ pub fn export_json(batches: &[RecordBatch]) -> String {
                 rank_col.value(i).to_string()
             };
 
+            // CH-7426 (nusy): `resolution`/`closed_by` were absent from this projection
+            // entirely, so a closure audit reading the JSON saw None for every item —
+            // including resolved ones — and an absent field is indistinguishable from an
+            // unset one. Null-safe like `assignee`: null when unset, never omitted.
             items.push(format!(
-                r#"  {{"id":"{}","title":"{}","type":"{}","status":"{}","priority":{},"rank":{},"assignee":{},"tags":[{}],"related":[{}],"depends_on":[{}],"body":{}}}"#,
+                r#"  {{"id":"{}","title":"{}","type":"{}","status":"{}","priority":{},"rank":{},"assignee":{},"resolution":{},"closed_by":{},"tags":[{}],"related":[{}],"depends_on":[{}],"body":{}}}"#,
                 escape_json(ids.value(i)),
                 escape_json(titles.value(i)),
                 escape_json(types.value(i)),
@@ -279,6 +285,8 @@ pub fn export_json(batches: &[RecordBatch]) -> String {
                 if priorities.is_null(i) { "null".to_string() } else { format!("\"{}\"", escape_json(priorities.value(i))) },
                 rank_json,
                 if assignees.is_null(i) { "null".to_string() } else { format!("\"{}\"", escape_json(assignees.value(i))) },
+                if resolutions.is_null(i) { "null".to_string() } else { format!("\"{}\"", escape_json(resolutions.value(i))) },
+                if closed_bys.is_null(i) { "null".to_string() } else { format!("\"{}\"", escape_json(closed_bys.value(i))) },
                 fmt_list(&tags),
                 fmt_list(&related),
                 fmt_list(&depends_on),
@@ -1494,6 +1502,41 @@ mod tests {
         assert!(json.contains("\"id\":\"EX-1300\""));
         assert!(json.contains("\"title\":\"Arrow Engine\""));
         assert!(json.contains("\"priority\":\"critical\""));
+    }
+
+    /// CH-7426 (nusy): `resolution`/`closed_by` were ABSENT from the JSON projection,
+    /// so a closure audit reading it saw None for every item — including resolved ones.
+    /// Both directions: a closed item carries the values; an open item carries explicit
+    /// nulls (present-but-null, never omitted — absent is indistinguishable from unset).
+    #[test]
+    fn test_export_json_carries_resolution_and_closed_by() {
+        let mut store = create_test_store();
+        let batches = store.query_items(None, None, Some("development"), None);
+        let json = export_json(&batches);
+        // Open items: the keys are PRESENT with null values.
+        assert!(
+            json.contains("\"resolution\":null"),
+            "an unresolved item must carry an explicit resolution:null, got: {json}"
+        );
+        assert!(json.contains("\"closed_by\":null"));
+
+        // Close one with a resolution + provenance, re-read.
+        store
+            .update_resolution("EX-1300", Some("completed"))
+            .unwrap();
+        store
+            .update_closed_by("EX-1300", Some("PROP-9999"))
+            .unwrap();
+        let batches = store.query_items(None, None, Some("development"), None);
+        let json = export_json(&batches);
+        assert!(
+            json.contains("\"resolution\":\"completed\""),
+            "a resolved item's resolution must appear in the JSON projection, got: {json}"
+        );
+        assert!(
+            json.contains("\"closed_by\":\"PROP-9999\""),
+            "closed_by must appear in the JSON projection"
+        );
     }
 
     #[test]
