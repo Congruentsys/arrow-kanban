@@ -1158,4 +1158,70 @@ mod tests {
             "an unresolvable-target edge must remain acceptable (cross-board rule)"
         );
     }
+
+    /// Count `kb:<name> a owl:ObjectProperty` DECLARATIONS in the ontology text, without
+    /// calling the production parser.
+    ///
+    /// Re-derives the parser's own discrimination rule (`relation_vocab::parse_object_properties`:
+    /// a statement whose SUBJECT starts with `kb:` and whose HEAD clause contains
+    /// `owl:ObjectProperty`) in a deliberately different, simpler way — statement-terminator
+    /// split rather than the quote-aware clause reader.
+    ///
+    /// WHY NOT the obvious `ttl.matches("owl:ObjectProperty").count()`: that counts MENTIONS,
+    /// not declarations, and `kanban.ttl` contains a prose comment naming the term. The naive
+    /// count is 23; the real declaration count is 22. That one-off is not hypothetical — it is
+    /// how a published write-up came to invite readers to "verify the 23-predicate count", a
+    /// number no test asserted and which does not reproduce. Use-vs-mention, in the wild.
+    ///
+    /// HONEST LIMIT, stated rather than implied: an independent re-derivation catches "the
+    /// loader dropped a declaration" and "the .ttl gained one the loader cannot see". It cannot
+    /// catch a rule BOTH implementations get wrong the same way. Calling the parser here would
+    /// remove even that, by comparing the parser to itself.
+    fn declared_object_properties(ttl: &str) -> usize {
+        ttl.split('\n')
+            .map(|l| l.split('#').next().unwrap_or("")) // drop full-line + trailing comments
+            .collect::<Vec<_>>()
+            .join("\n")
+            .split(" .")
+            .filter(|stmt| {
+                let head = stmt.split(';').next().unwrap_or("").trim();
+                let subject = head.split_whitespace().next().unwrap_or("");
+                subject.starts_with("kb:") && head.contains("owl:ObjectProperty")
+            })
+            .count()
+    }
+
+    /// The loaded predicate COUNT is pinned to the ontology, never to a literal.
+    ///
+    /// The existing data-only guards pin specific PAIRS; none pinned the total, so the number
+    /// drifts silently every time someone adds a predicate — and a published "verify N" claim
+    /// had nothing behind it.
+    ///
+    /// BOTH SIDES ARE DERIVED. A hardcoded `assert_eq!(22)` would need editing on every
+    /// legitimate addition and would go RED for the RIGHT reason at the WRONG time — a correct
+    /// change failing a test, which is how a test gets deleted instead of fixed.
+    #[test]
+    fn loaded_predicate_count_matches_the_ontology_declaration_count() {
+        let declared = declared_object_properties(KANBAN_TTL);
+        let loaded = predicates().len();
+
+        // Non-vacuity: a counter that returns 0 would make the assertion below trivially
+        // satisfiable if the loader ever fell back to an empty set.
+        assert!(
+            declared >= FALLBACK_PREDICATES.len(),
+            "the ontology must declare at least the compiled fallback set ({} declared, {} \
+             compiled) — a smaller count means the counter is not seeing the declarations",
+            declared,
+            FALLBACK_PREDICATES.len()
+        );
+
+        assert_eq!(
+            loaded, declared,
+            "the loader produced {loaded} predicate(s) but ontology/kanban.ttl declares \
+             {declared}. Neither number is hardcoded here: if you added a predicate to the \
+             .ttl this test stays green by construction, so a mismatch means the loader and \
+             the ontology genuinely disagree — most likely a parse the loader rejected (it \
+             fails CLOSED to the compiled fallback) rather than a miscount."
+        );
+    }
 }
