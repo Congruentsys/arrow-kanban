@@ -979,6 +979,16 @@ pub fn format_campaign_roadmap(camp_id: &str, members: &[String], items: &[ItemI
         .into_iter()
         .filter(|g| members.contains(&g.voyage_id))
         .collect();
+    // Say the drop out loud: group_by_voyage omits fully-done member voyages from the
+    // active-work section while the aggregate above still counts them (deliberate — the
+    // %-done must not fall when a member finishes). Without this line the header cannot
+    // be audited from the visible rows, only from the source.
+    let dropped = member_count.saturating_sub(member_groups.len());
+    if dropped > 0 {
+        out.push_str(&format!(
+            "  ({dropped} completed member voyage(s) not shown below — counted in the aggregate)\n\n"
+        ));
+    }
     let member_ids: HashSet<&str> = member_groups
         .iter()
         .flat_map(|g| {
@@ -1008,11 +1018,18 @@ pub fn format_roadmap(
     let mut lines = Vec::new();
 
     for group in groups {
+        // "items", not bare "done": the bracket counts ALL member item types, while
+        // the program header's figure is labelled expeditions-only — unlabelled, the
+        // two read as the same basis and they are not.
         let progress = format!(
             "[{}/{}{}]",
             group.done_count,
             group.total_count,
-            if group.total_count > 0 { " done" } else { "" }
+            if group.total_count > 0 {
+                " items done"
+            } else {
+                ""
+            }
         );
         lines.push(format!(
             "{}: {} {}",
@@ -1603,6 +1620,65 @@ mod tests {
         assert_eq!(member_count, 1);
         assert_eq!(total, 1, "the implements-only expedition now counts");
         assert_eq!(done, 0);
+    }
+
+    #[test]
+    fn voyage_bracket_names_its_basis() {
+        // The program header says "expeditions done" — a labelled, expedition-only
+        // figure. The per-voyage bracket counts ALL member item types, and printing
+        // it as a bare "[7/9 done]" next to that header invites reading the two as
+        // the same basis (97% over rows averaging 71%, measured on a live program
+        // rollup). The bracket must NAME its basis: "[N/M items done]".
+        let mut h = ex("H-1");
+        h.item_type = "hypothesis".into();
+        h.status = "done".into();
+        h.related = vec!["VY-20".into()];
+        let mut e = ex("EX-20");
+        e.related = vec!["VY-20".into()];
+        let items = vec![vy("VY-20"), e, h];
+        let (groups, orphans) = group_by_voyage(&items);
+        let cp = compute_critical_path(&items).unwrap();
+        let out = format_roadmap(&items, &groups, &orphans, &cp);
+        assert!(
+            out.contains("[1/2 items done]"),
+            "the bracket must say ITEMS so its all-types basis is visible next to \
+             the expeditions-only program header; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn campaign_rollup_names_dropped_completed_members() {
+        // group_by_voyage deliberately DROPS fully-done member voyages from the
+        // active-work section while the aggregate still counts them — right, and
+        // documented. But the reader auditing the header against the visible rows
+        // cannot reconcile them unless the drop is SAID on screen.
+        let mut done_child = ex("EX-30");
+        done_child.status = "done".into();
+        done_child.related = vec!["VY-30".into()];
+        let mut done_vy = vy("VY-30");
+        done_vy.status = "done".into();
+        let mut active_child = ex("EX-31");
+        active_child.related = vec!["VY-31".into()];
+        let items = vec![done_vy, vy("VY-31"), done_child, active_child];
+        let members = vec!["VY-30".to_string(), "VY-31".to_string()];
+        let out = format_campaign_roadmap("CA-1", &members, &items);
+        assert!(
+            out.contains("1 completed member voyage(s) not shown"),
+            "a dropped completed member must be announced, so the header is \
+             auditable from the visible rows; got:\n{out}"
+        );
+
+        // And the note must NOT print when nothing was dropped.
+        let items2 = vec![vy("VY-31"), {
+            let mut e = ex("EX-31");
+            e.related = vec!["VY-31".into()];
+            e
+        }];
+        let out2 = format_campaign_roadmap("CA-1", &["VY-31".to_string()], &items2);
+        assert!(
+            !out2.contains("not shown"),
+            "no dropped members => no note (a note that always prints is noise); got:\n{out2}"
+        );
     }
 
     #[test]
