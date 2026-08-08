@@ -135,6 +135,7 @@ fn created(id: &str) -> MutationEvent {
         depends_on: Vec::new(),
         body: None,
         relationships: Vec::new(),
+        agent: None,
     })
 }
 

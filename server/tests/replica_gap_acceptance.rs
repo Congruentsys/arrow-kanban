@@ -165,6 +165,7 @@ fn created(seq: Seq, epoch: Epoch, id: &str) -> CommittedEvent {
             depends_on: Vec::new(),
             body: None,
             relationships: Vec::new(),
+            agent: None,
         }),
     }
 }

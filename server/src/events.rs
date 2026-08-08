@@ -199,6 +199,10 @@ pub struct CreatedEvent {
     pub body: Option<String>,
     /// Typed edges recorded at create time, as `predicate:TARGET`.
     pub relationships: Vec<String>,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a status move.
@@ -212,6 +216,10 @@ pub struct MovedEvent {
     pub reason: Option<String>,
     pub resolution: Option<String>,
     pub closed_by: Option<String>,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a requeue (issue #40). Carries the RESULT — the
@@ -237,6 +245,10 @@ pub struct RequeuedEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeletedEvent {
     pub id: String,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a phase ratification.
@@ -246,6 +258,10 @@ pub struct RatifiedEvent {
     pub stripped: Vec<String>,
     pub voyages_started: Vec<String>,
     pub remaining_pending: u64,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a field/relationship update.
@@ -265,6 +281,10 @@ pub struct UpdatedEvent {
     pub updated: Vec<String>,
     pub relationships_added: Vec<String>,
     pub relationships_removed: Vec<String>,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a comment.
@@ -280,6 +300,10 @@ pub struct CommentedEvent {
 pub struct RankedEvent {
     pub id: String,
     pub rank: Option<i32>,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a typed-relation add.
@@ -288,6 +312,10 @@ pub struct RelationAddedEvent {
     pub source: String,
     pub target: String,
     pub predicate: String,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a typed-relation REMOVE (the deletion
@@ -297,6 +325,10 @@ pub struct RelationRemovedEvent {
     pub source: String,
     pub target: String,
     pub predicate: String,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Notification record of an experiment-run start/complete. The run store is
@@ -366,6 +398,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 depends_on: vstr(&q, "depends_on"),
                 body: ostr(&q, "body"),
                 relationships: vstr(&rv, "relationships"),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::HddCreate(item_type, req) => {
@@ -384,6 +417,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 depends_on: Vec::new(),
                 body: ostr(&q, "body"),
                 relationships: Vec::new(),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::Move(req) => {
@@ -399,6 +433,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 reason: ostr(&q, "reason"),
                 resolution: ostr(&q, "resolution"),
                 closed_by: ostr(&q, "closed_by"),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::Requeue(req) => {
@@ -423,6 +458,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
             let q = serde_json::to_value(req).ok()?;
             Some(MutationEvent::Deleted(DeletedEvent {
                 id: ostr(&rv, "id").or_else(|| ostr(&q, "id"))?,
+                agent: ostr(&q, "actor"),
             }))
         }
         C::Ratify(req) => {
@@ -435,6 +471,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                     .get("remaining_pending")
                     .and_then(|x| x.as_u64())
                     .unwrap_or(0),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::Update(req) => {
@@ -453,6 +490,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 updated: vstr(&rv, "updated"),
                 relationships_added: vstr(&rv, "relationships_added"),
                 relationships_removed: vstr(&rv, "relationships_removed"),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::Comment(req) => {
@@ -468,6 +506,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
             Some(MutationEvent::Ranked(RankedEvent {
                 id: ostr(&q, "id").or_else(|| ostr(&rv, "id"))?,
                 rank: q.get("rank").and_then(|x| x.as_i64()).map(|n| n as i32),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::RelationAdd(req) => {
@@ -476,6 +515,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 source: ostr(&q, "source_id").or_else(|| ostr(&rv, "source"))?,
                 target: ostr(&q, "target_id").or_else(|| ostr(&rv, "target"))?,
                 predicate: ostr(&q, "predicate").or_else(|| ostr(&rv, "predicate"))?,
+                agent: ostr(&q, "actor"),
             }))
         }
         C::RelationRemove(req) => {
@@ -484,6 +524,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 source: ostr(&q, "source_id").or_else(|| ostr(&rv, "source"))?,
                 target: ostr(&q, "target_id").or_else(|| ostr(&rv, "target"))?,
                 predicate: ostr(&q, "predicate").or_else(|| ostr(&rv, "predicate"))?,
+                agent: ostr(&q, "actor"),
             }))
         }
         #[cfg(feature = "research")]
@@ -1052,6 +1093,7 @@ mod tests {
             depends_on: vec![],
             body: Some("b".into()),
             relationships: vec![],
+            agent: None,
         })
     }
 
@@ -1085,6 +1127,7 @@ mod tests {
             reason: None,
             resolution: None,
             closed_by: None,
+            agent: None,
         });
         assert_eq!(moved.subject_suffix(), "moved");
         assert_eq!(moved.contract_version(), "1.0");
@@ -1099,7 +1142,10 @@ mod tests {
             .unwrap()
         );
 
-        let deleted = MutationEvent::Deleted(DeletedEvent { id: "CH-9".into() });
+        let deleted = MutationEvent::Deleted(DeletedEvent {
+            id: "CH-9".into(),
+            agent: None,
+        });
         assert_eq!(deleted.subject_suffix(), "deleted");
         assert_eq!(deleted.contract_version(), "1.0");
         assert_eq!(
@@ -1119,6 +1165,71 @@ mod tests {
         assert_eq!(commented.subject_suffix(), "commented");
         assert_eq!(commented.contract_version(), "1.1");
         assert_eq!(commented.outbox_payload()["comment"], "hi");
+    }
+
+    /// An `--assign`-bearing move CARRIES the acting agent onto its event.
+    ///
+    /// Asserted POSITIVELY: the event's `agent` equals the envelope's actor. A
+    /// "the agent is not wrong" phrasing would pass vacuously the moment the field
+    /// stopped being populated at all.
+    ///
+    /// Driven through the real wire parse rather than by constructing the request
+    /// struct, so this also pins that `actor` survives deserialization — the field
+    /// rode the wire before this change and was silently dropped, which is exactly
+    /// the failure a struct-built fixture would hide.
+    #[test]
+    fn assign_bearing_move_event_names_the_acting_agent() {
+        let cmd = crate::engine::parse(
+            "move",
+            br#"{"id":"CH-9","status":"in_progress","assignee":"M5","actor":"DGX2"}"#,
+        )
+        .expect("move payload parses");
+        let reply = KanbanReply::Value(serde_json::json!({
+            "id": "CH-9", "from": "backlog", "to": "in_progress",
+        }));
+
+        let ev = mutation_event(&cmd, &reply).expect("move derives a mutation event");
+        let MutationEvent::Moved(ref e) = ev else {
+            panic!("expected Moved, got {ev:?}");
+        };
+
+        assert_eq!(
+            e.agent.as_deref(),
+            Some("DGX2"),
+            "the event must name WHO performed the move"
+        );
+        // The distinction this item exists for: `assignee` is who the item is FOR,
+        // `agent` is who acted. A change that populated `agent` from `assignee`
+        // would satisfy a laxer assertion while still never answering "who did this".
+        assert_eq!(e.assignee.as_deref(), Some("M5"));
+        assert_ne!(
+            e.agent, e.assignee,
+            "agent must not be sourced from assignee — they answer different questions"
+        );
+    }
+
+    /// No actor on the envelope means `None`, never a placeholder. An invented
+    /// actor looks like provenance, compares like provenance, and identifies nobody.
+    #[test]
+    fn an_absent_actor_stays_none_and_is_never_fabricated() {
+        let cmd = crate::engine::parse(
+            "move",
+            br#"{"id":"CH-9","status":"in_progress","assignee":"M5"}"#,
+        )
+        .expect("move payload parses");
+        let reply = KanbanReply::Value(serde_json::json!({
+            "id": "CH-9", "from": "backlog", "to": "in_progress",
+        }));
+
+        let ev = mutation_event(&cmd, &reply).expect("move derives a mutation event");
+        let MutationEvent::Moved(ref e) = ev else {
+            panic!("expected Moved, got {ev:?}");
+        };
+        assert_eq!(
+            e.agent, None,
+            "an absent actor is honest; a placeholder is not"
+        );
+        assert_eq!(e.assignee.as_deref(), Some("M5"), "assignee is unaffected");
     }
 
     /// The commit-log form round-trips (serialize → deserialize is identity), so
@@ -1163,19 +1274,26 @@ mod tests {
             reason: None,
             resolution: None,
             closed_by: None,
+            agent: None,
         })
         .replay_into(&mut store, &mut rels)
         .expect("replay move");
 
-        MutationEvent::Deleted(DeletedEvent { id: "CH-9".into() })
-            .replay_into(&mut store, &mut rels)
-            .expect("replay delete");
+        MutationEvent::Deleted(DeletedEvent {
+            id: "CH-9".into(),
+            agent: None,
+        })
+        .replay_into(&mut store, &mut rels)
+        .expect("replay delete");
         assert!(store.get_item("CH-9").is_err(), "delete replay removed it");
 
         // Idempotent delete: replaying delete on a gone item is a no-op.
-        MutationEvent::Deleted(DeletedEvent { id: "CH-9".into() })
-            .replay_into(&mut store, &mut rels)
-            .expect("idempotent delete replay");
+        MutationEvent::Deleted(DeletedEvent {
+            id: "CH-9".into(),
+            agent: None,
+        })
+        .replay_into(&mut store, &mut rels)
+        .expect("idempotent delete replay");
     }
 
     /// Issue #40: the requeue event carries the RESULT (absolute attempts,
