@@ -504,6 +504,34 @@ impl KanbanStore {
         // Record in runs table
         self.record_run(id, Some(&old_status), new_status, agent, forced, reason)?;
 
+        // CLOSURE FIELDS DO NOT SURVIVE A REOPEN.
+        //
+        // `resolution` says WHY an item closed and `closed_by` says WHAT closed it, so both are
+        // meaningful only while the item IS closed. The invariant was already stated on the way
+        // IN — `state_machine::validate_resolution` refuses a resolution on a non-terminal
+        // target — but nothing applied it on the way OUT, so a reopened item kept them forever:
+        //
+        //     move X done --resolution completed --closed-by PROP-42
+        //     move X backlog --force
+        //     show X   ->  Status backlog / Resolution completed / Closed by PROP-42
+        //
+        // and `list --resolution completed` then returned that OPEN item while `history` and
+        // `stats` correctly did not. Three commands, one item, two answers — with no way to
+        // repair it: `update` has no resolution flag and `move --resolution ""` is refused by
+        // the value validator.
+        //
+        // THIS LIVES IN THE STORE, NOT THE CLI, because the CLI is not the only writer: the
+        // server sets both fields the same way (`handlers/core.rs`), so a CLI-side fix would
+        // leave every server-mode board — including this project's own — still wrong. One
+        // enforcement point also means there is no second call site to drift.
+        //
+        // A terminal -> terminal move (`done` -> `abandoned`) is a RE-CLASSIFICATION rather
+        // than a reopen and correctly keeps both fields.
+        if !crate::state_machine::is_terminal_state(new_status) {
+            self.update_resolution(id, None)?;
+            self.update_closed_by(id, None)?;
+        }
+
         Ok(old_status)
     }
 
@@ -1400,6 +1428,120 @@ mod tests {
         assert_eq!(id1, "EX-1300");
         assert_eq!(id2, "EX-1301");
         assert_eq!(id3, "CH-1302"); // Global counter, shared across types
+    }
+
+    /// A reopened item must not keep the fields that describe its closure.
+    ///
+    /// Driven through the STORE rather than a pure predicate on purpose: the defect was never in
+    /// deciding whether to clear, it was that no caller ever did. A test of the decision alone
+    /// stays green when the call site is removed — verified, so this one goes through
+    /// `update_status` itself.
+    #[test]
+    fn reopening_clears_the_closure_fields() {
+        let mut store = KanbanStore::new();
+        let id = store
+            .create_item(&CreateItemInput {
+                title: "Ship it".to_string(),
+                item_type: ItemType::Chore,
+                priority: None,
+                assignee: None,
+                tags: vec![],
+                related: vec![],
+                depends_on: vec![],
+                body: None,
+            })
+            .expect("create");
+
+        store.update_status(&id, "done", None, false, None).unwrap();
+        store.update_resolution(&id, Some("completed")).unwrap();
+        store.update_closed_by(&id, Some("PROP-42")).unwrap();
+        assert_eq!(read_resolution(&store, &id).as_deref(), Some("completed"));
+        assert_eq!(read_closed_by(&store, &id).as_deref(), Some("PROP-42"));
+
+        // Reopen.
+        store
+            .update_status(&id, "in_progress", None, false, None)
+            .unwrap();
+
+        assert_eq!(
+            read_resolution(&store, &id),
+            None,
+            "a reopened item keeping `completed` makes `list --resolution completed` return open work"
+        );
+        assert_eq!(
+            read_closed_by(&store, &id),
+            None,
+            "a reopened item keeping `closed_by` attributes open work to a merged proposal"
+        );
+    }
+
+    /// The negative control. Without it, a clear-everything implementation passes the test above.
+    #[test]
+    fn re_classifying_a_closure_keeps_the_closure_fields() {
+        let mut store = KanbanStore::new();
+        let id = store
+            .create_item(&CreateItemInput {
+                title: "Not doing it".to_string(),
+                item_type: ItemType::Chore,
+                priority: None,
+                assignee: None,
+                tags: vec![],
+                related: vec![],
+                depends_on: vec![],
+                body: None,
+            })
+            .expect("create");
+
+        store.update_status(&id, "done", None, false, None).unwrap();
+        store.update_resolution(&id, Some("completed")).unwrap();
+        store.update_closed_by(&id, Some("PROP-8888")).unwrap();
+
+        // done -> abandoned is a re-classification, not a reopen.
+        store
+            .update_status(&id, "abandoned", None, false, None)
+            .unwrap();
+
+        assert_eq!(
+            read_resolution(&store, &id).as_deref(),
+            Some("completed"),
+            "terminal -> terminal re-classifies WHY it closed; the resolution must survive"
+        );
+        assert_eq!(
+            read_closed_by(&store, &id).as_deref(),
+            Some("PROP-8888"),
+            "terminal -> terminal must keep closure provenance"
+        );
+    }
+
+    fn read_col(store: &KanbanStore, id: &str, col: usize) -> Option<String> {
+        for batch in &store.items_batches {
+            let ids = batch
+                .column(items_col::ID)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            for i in 0..batch.num_rows() {
+                if ids.value(i) == id {
+                    let c = batch
+                        .column(col)
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .unwrap();
+                    return if c.is_null(i) {
+                        None
+                    } else {
+                        Some(c.value(i).to_string())
+                    };
+                }
+            }
+        }
+        None
+    }
+    fn read_resolution(store: &KanbanStore, id: &str) -> Option<String> {
+        read_col(store, id, items_col::RESOLUTION)
+    }
+    fn read_closed_by(store: &KanbanStore, id: &str) -> Option<String> {
+        read_col(store, id, items_col::CLOSED_BY)
     }
 
     #[test]
