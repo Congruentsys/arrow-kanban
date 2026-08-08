@@ -23,7 +23,7 @@
 //!
 //! ```yaml
 //! backup:
-//!   destination: /Volumes/mate-mini/arrow-kanban-backup
+//!   destination: ./arrow-kanban-backup   (override with --destination)
 //!   format: timestamp  # timestamp=YYYY-MM-DD_HHMMSS, date=YYYY-MM-DD
 //!   retention: 10      # keep N snapshots (0=infinite)
 //!   schedule: daily   # cron expression or simple alias: hourly, daily, weekly
@@ -89,7 +89,11 @@ pub enum BackupFormat {
 impl Default for BackupConfig {
     fn default() -> Self {
         Self {
-            destination: PathBuf::from("/Volumes/mate-mini/arrow-kanban-backup"),
+            // A path every user has, rather than one only this project's fleet has. The
+            // previous default named an internal NFS mount, so `backup` failed
+            // unconditionally for anyone outside it and `restore` was unreachable for
+            // the same reason — and the machine name shipped inside a public binary.
+            destination: PathBuf::from("./arrow-kanban-backup"),
             format: BackupFormat::Timestamp,
             retention: 0, // infinite — Arrow store is small, keep all snapshots
             schedule: "daily".to_string(),
@@ -235,8 +239,13 @@ pub fn create_snapshot(config: &BackupConfig, root: &Path) -> Result<PathBuf> {
         config.destination.clone()
     });
 
+    // CREATE the destination rather than refusing. This is the WRITE path, and a
+    // backup command that will not make its own destination is unusable on a fresh
+    // install — the default has to be a path the user HAS, and creating it is how it
+    // becomes one. The read path below deliberately still refuses: listing snapshots
+    // must not conjure an empty directory as a side effect of looking.
     if !dest.exists() {
-        return Err(BackupError::DestinationNotFound(dest.display().to_string()));
+        std::fs::create_dir_all(&dest)?;
     }
 
     // Create snapshot directory

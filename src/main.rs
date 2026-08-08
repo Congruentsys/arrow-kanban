@@ -364,11 +364,19 @@ enum Commands {
         json: bool,
     },
 
-    /// Migrate markdown files to Arrow store
+    /// Migrate markdown files to Arrow store. REPLACES the board with what it
+    /// finds in the config's scan_paths — it does not merge into the existing
+    /// items. On an Arrow-native board there is no markdown to scan, so this
+    /// rebuilds from nothing; the guard below refuses that case.
     Migrate {
         /// Dry run — show what would be migrated without saving
         #[arg(long)]
         dry_run: bool,
+        /// Replace the board even when the migration produced NO items and the
+        /// board is not empty. Without this the command refuses, because that
+        /// case deletes every item and cannot be undone.
+        #[arg(long)]
+        force: bool,
     },
 
     /// HDD (research board) commands
@@ -439,6 +447,9 @@ enum Commands {
         /// Show detailed info about a specific snapshot.
         #[arg(long)]
         inspect: Option<String>,
+        /// Where snapshots live. Defaults to ./arrow-kanban-backup beside the board.
+        #[arg(long)]
+        destination: Option<std::path::PathBuf>,
     },
 
     /// Restore the kanban Arrow store from a backup snapshot.
@@ -568,8 +579,12 @@ fn run_backup_command(
     root: &std::path::Path,
     list: bool,
     inspect: Option<String>,
+    destination: Option<std::path::PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = BackupConfig::default();
+    let mut config = BackupConfig::default();
+    if let Some(d) = destination {
+        config.destination = d;
+    }
 
     if list {
         let snapshots = backup::list_snapshots(&config)?;
@@ -858,8 +873,13 @@ fn main() {
     }
 
     // Backup command runs locally — snapshot or list Arrow store.
-    if let Commands::Backup { list, inspect } = &cli.command {
-        if let Err(e) = run_backup_command(&root, *list, inspect.clone()) {
+    if let Commands::Backup {
+        list,
+        inspect,
+        destination,
+    } = &cli.command
+    {
+        if let Err(e) = run_backup_command(&root, *list, inspect.clone(), destination.clone()) {
             eprintln!("Error: {e}");
             process::exit(1);
         }
@@ -2023,13 +2043,34 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
             }
         }
 
-        Commands::Migrate { dry_run } => {
+        Commands::Migrate { dry_run, force } => {
             let result = arrow_kanban::migrate::migrate_boards(&root, &config)?;
             println!("{}", result.summary());
 
             if dry_run {
                 println!("Dry run — no changes saved.");
             } else {
+                // This command REPLACES the store rather than merging into it. On a board
+                // created with `create` there is no markdown to scan, so the migration
+                // yields nothing and the save wipes every item — while the summary reports
+                // "Items migrated: 0" and the process exits 0. Everything about that output
+                // says it worked. Refuse the case instead of reporting it as success.
+                let existing = store.item_count();
+                let migrated = result.items.len();
+                if migrate_would_destroy(existing, migrated, force) {
+                    eprintln!(
+                        "Error: migrate found no items to migrate, but the board holds {existing}. \
+Saving would DELETE all {existing} and cannot be undone."
+                    );
+                    eprintln!(
+                        "  This command rebuilds the board from markdown in the config's scan_paths; \
+a board created with `create` has none."
+                    );
+                    eprintln!(
+                        "  Re-run with --force if replacing the board with an empty one is what you want."
+                    );
+                    process::exit(1);
+                }
                 let (migrated_store, rel_store) = result.into_stores()?;
                 save_store_noting(&root, &migrated_store)?;
                 save_relations_noting(&root, &rel_store)?;
@@ -2574,6 +2615,50 @@ mod tracked_board_notice_tests {
     }
 }
 
+/// Whether saving this migration would DESTROY a board rather than migrate one.
+///
+/// Pure so the decision is testable without a store: `migrate` REPLACES the board
+/// with whatever it scanned, and on an Arrow-native board there is nothing to scan,
+/// so an empty result silently wipes every item while the summary reports
+/// "Items migrated: 0" and the process exits 0.
+///
+/// Narrow on purpose — it fires only on the total-loss case (a non-empty board and a
+/// migration that produced nothing). A partial migration is a legitimate outcome when
+/// markdown really is the source of truth, and refusing those would make the command
+/// unusable for its actual purpose.
+fn migrate_would_destroy(existing: usize, migrated: usize, force: bool) -> bool {
+    existing > 0 && migrated == 0 && !force
+}
+
+#[cfg(test)]
+mod migrate_guard_tests {
+    use super::*;
+
+    #[test]
+    fn the_guard_fires_only_on_total_loss_of_a_non_empty_board() {
+        assert!(
+            migrate_would_destroy(3, 0, false),
+            "3 items in, 0 migrated: saving deletes everything — refuse"
+        );
+        assert!(
+            !migrate_would_destroy(3, 0, true),
+            "--force is the deliberate escape hatch and must still work"
+        );
+        assert!(
+            !migrate_would_destroy(0, 0, false),
+            "an EMPTY board loses nothing — migrating it is not destruction"
+        );
+        assert!(
+            !migrate_would_destroy(3, 2, false),
+            "a PARTIAL migration is legitimate when markdown is the source of truth"
+        );
+        assert!(
+            !migrate_would_destroy(3, 5, false),
+            "a migration that ADDS items is the command working as intended"
+        );
+    }
+}
+
 fn copy_dir_recursive(
     src: &std::path::Path,
     dest: &std::path::Path,
@@ -3015,7 +3100,11 @@ fn command_to_nats(command: &Commands) -> (String, serde_json::Value) {
             "next-id".to_string(),
             serde_json::json!({ "item_type": item_type }),
         ),
-        Commands::Migrate { dry_run: _ } => {
+        // `..` rather than naming each field: this arm maps every Migrate to "stats" and
+        // reads none of them, so `..` states the truth — we do not care about any field
+        // here. Naming them compiles equally well and breaks again the next time a flag is
+        // added to the variant, which is exactly what happened when --force was introduced.
+        Commands::Migrate { .. } => {
             // Migration doesn't make sense in client mode
             ("stats".to_string(), serde_json::json!({}))
         }
