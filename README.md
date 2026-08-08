@@ -270,6 +270,60 @@ Stated so you can tell what you still have to build:
   exists to keep it that way. Your vocabulary goes in an extension, not in the engine.
 - **No opinion about who may write.** `WriterLease` gives you fencing; the policy is yours.
 
+## Known issues
+
+An honest list as of this release. None of these loses data; each has a workaround. Contributions
+welcome on any of them — they are small, self-contained, and a good first PR.
+
+**Reopening a closed item needs `--force`, and `--force`'s help describes something else.**
+Closing is easy; reopening is not discoverable. `done -> review`, `done -> in_progress` and
+`done -> backlog` are all refused, and the only route back is `move <ID> <state> --force` — whose
+help reads *"Force move (bypass WIP limits)"*, a different feature. If forward-only is wrong for
+your workflow, the transition rules come from the ORDER of the `states:` array in
+`.arrow-kanban/config.yaml`, so appending a post-`done` state makes reopening legal without
+`--force`. Note that doing so also changes what `history` reports, since it keys off the same
+ordering.
+
+**WIP limits are configured but not enforced.** `init` writes
+`wip_limits: {in_progress: 4, review: 3}` and nothing reads them — seven items will move into
+`in_progress` without complaint. This is also why `--force`'s documented purpose currently has
+nothing to bypass.
+
+**Research-board items are created in a status that board does not define.** `create idea |
+hypothesis | experiment | paper | measure | literature` seeds `status: backlog`, a
+development-board state, so the research board's own states then refuse it:
+
+```
+$ arrow-kanban create idea "..."       # -> IDEA-1307, status backlog, board research
+$ arrow-kanban move IDEA-1307 captured
+Error: Invalid state 'backlog' for board 'research'
+```
+
+Workaround: `move <ID> <state> --force` once. After that the research lifecycle behaves correctly
+(`draft -> active -> retired`, `planned -> running -> complete`, backward moves refused). The
+development board is unaffected.
+
+**Typed relationships are write-only at the CLI.** `update <ID> --relate implements:VY-1` persists
+correctly, but `show --relations` renders only `dependsOn` and `related` — the two that project to
+flat columns. `implements`, `blocks`, `parent` and `partOf` are stored and queryable by the engine
+but invisible in `show`. Your data is intact; the read surface is missing.
+
+**`--priority` accepts any string.** `--priority banana` is stored, displayed, and round-trips
+through `list --priority banana`. The sibling `--resolution` on `move` validates properly and
+lists its valid values, which is what makes the inconsistency surprising.
+
+**`list` and `board`/`stats` disagree about scope.** `list` with no `--board` spans every board;
+`board` and `stats` default to the development board only. Each is internally consistent, but the
+totals differ. Pass `--board` explicitly to compare like with like.
+
+**`in_progress` overflows its column in `list`.** The Status column is ten characters wide and
+`in_progress` is eleven, so it runs into Priority on every in-progress row. Cosmetic, but it hits
+the default view constantly.
+
+**`next-id` and `next` are unreliable.** `next-id` can return the same id on consecutive calls,
+and `next` can suggest work whose dependencies are unmet. Use `create` (which allocates correctly)
+and `roadmap --ready` / `blocked` instead.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) — start with the export-gate section:
