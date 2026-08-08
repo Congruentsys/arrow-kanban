@@ -1167,6 +1167,85 @@ mod tests {
         assert_eq!(commented.outbox_payload()["comment"], "hi");
     }
 
+    /// EVERY envelope-populated variant names its actor — one arm per site.
+    ///
+    /// The move arm alone is not enough: `agent` is read from the envelope at nine
+    /// sites, and a single-path test leaves eight of them free to be dropped by a
+    /// refactor without anything going red. The events would keep flowing, just
+    /// anonymously, which is the silent direction.
+    ///
+    /// Asserted through the serialized event so one table covers every variant
+    /// without per-variant destructuring — and so a variant that loses its field
+    /// entirely fails here too, not just one that stops populating it.
+    #[test]
+    fn every_envelope_populated_variant_names_its_actor() {
+        // (verb, request payload, reply value) — one per envelope-read site.
+        let cases: Vec<(&str, serde_json::Value, serde_json::Value)> = vec![
+            (
+                "create",
+                serde_json::json!({"title":"T","item_type":"chore","actor":"DGX2"}),
+                serde_json::json!({"id":"CH-9","title":"T","item_type":"chore"}),
+            ),
+            (
+                "hdd.paper",
+                serde_json::json!({"title":"P","actor":"DGX2"}),
+                serde_json::json!({"id":"PAPER-1","title":"P"}),
+            ),
+            (
+                "move",
+                serde_json::json!({"id":"CH-9","status":"in_progress","actor":"DGX2"}),
+                serde_json::json!({"id":"CH-9","from":"backlog","to":"in_progress"}),
+            ),
+            (
+                "delete",
+                serde_json::json!({"id":"CH-9","actor":"DGX2"}),
+                serde_json::json!({"id":"CH-9"}),
+            ),
+            (
+                "ratify",
+                serde_json::json!({"phase_tag":"p1","actor":"DGX2"}),
+                serde_json::json!({"phase_tag":"p1","stripped":[],"voyages_started":[],"remaining_pending":0}),
+            ),
+            (
+                "update",
+                serde_json::json!({"id":"CH-9","actor":"DGX2"}),
+                serde_json::json!({"id":"CH-9","updated":[]}),
+            ),
+            (
+                "rank",
+                serde_json::json!({"id":"CH-9","rank":3,"actor":"DGX2"}),
+                serde_json::json!({"id":"CH-9"}),
+            ),
+            (
+                "relation.add",
+                serde_json::json!({"source_id":"CH-9","target_id":"CH-8","predicate":"blocks","actor":"DGX2"}),
+                serde_json::json!({"source":"CH-9","target":"CH-8","predicate":"blocks"}),
+            ),
+            (
+                "relation.remove",
+                serde_json::json!({"source_id":"CH-9","target_id":"CH-8","predicate":"blocks","actor":"DGX2"}),
+                serde_json::json!({"source":"CH-9","target":"CH-8","predicate":"blocks"}),
+            ),
+        ];
+
+        // A floor: if the table ever stops covering the sites it claims to, that is
+        // the scanner being broken, not the code being clean.
+        assert_eq!(cases.len(), 9, "one arm per envelope-populated site");
+
+        for (verb, payload, reply_value) in cases {
+            let cmd = crate::engine::parse(verb, payload.to_string().as_bytes())
+                .unwrap_or_else(|_| panic!("{verb} payload parses"));
+            let ev = mutation_event(&cmd, &KanbanReply::Value(reply_value))
+                .unwrap_or_else(|| panic!("{verb} derives a mutation event"));
+            let j = serde_json::to_value(&ev).expect("event serializes");
+            assert_eq!(
+                j.get("agent").and_then(|a| a.as_str()),
+                Some("DGX2"),
+                "{verb}: the emitted event must name the acting agent (got {j})"
+            );
+        }
+    }
+
     /// An `--assign`-bearing move CARRIES the acting agent onto its event.
     ///
     /// Asserted POSITIVELY: the event's `agent` equals the envelope's actor. A

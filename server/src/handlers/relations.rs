@@ -11,6 +11,12 @@ pub struct RelationAddRequest {
     source_id: String,
     target_id: String,
     predicate: String,
+    /// Who issued this command. Stamped into every request envelope by the
+    /// client, which is the only party that knows the caller's identity; the
+    /// server never resolves it locally (one process would stamp its own host
+    /// on every fleet mutation). `None` is honest — never fabricate an actor.
+    #[serde(default)]
+    actor: Option<String>,
 }
 
 pub(crate) fn handle_relation_add_typed(
@@ -42,6 +48,12 @@ pub struct RelationRemoveRequest {
     source_id: String,
     target_id: String,
     predicate: String,
+    /// Who issued this command. Stamped into every request envelope by the
+    /// client, which is the only party that knows the caller's identity; the
+    /// server never resolves it locally (one process would stamp its own host
+    /// on every fleet mutation). `None` is honest — never fabricate an actor.
+    #[serde(default)]
+    actor: Option<String>,
 }
 
 pub(crate) fn handle_relation_remove_typed(
