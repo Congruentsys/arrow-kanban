@@ -144,16 +144,29 @@ count, so a large board costs proportionally more — measure your own with
 
 How much more is worth an anchor, because the two ends are far apart. Each commit stores a full
 copy of the changed parquet file (parquet does not delta-compress), so the per-commit cost is
-roughly the size of your store:
+roughly the size of your store — and **what drives that size is the content of your items, not
+how many you have:**
 
-| board | `items.parquet` | per commit |
-|---|---|---|
-| ~80 items | ~10 KB | ~20 KiB |
-| ~40,000 items | ~20 MB | ~20 MB |
+| board | item bodies | `items.parquet` | bytes/item |
+|---|---|---|---|
+| 80 items | one line each | 2.2 KiB | 28 |
+| 5,437 items | long markdown | 18.9 MiB | 3,647 |
 
-Neither figure generalises to the other. A small board is effectively free to version; a large
-one committed on every change is not, and that is a reason to ignore the store rather than a
-reason to avoid the tool.
+Both rows are measured, not extrapolated:
+
+```sh
+python3 -c "import pyarrow.parquet as pq, os; f='.nusy-kanban/items.parquet'; \
+n=pq.read_table(f).num_rows; b=os.path.getsize(f); print(n, b, b/n)"
+```
+
+**Per item, those boards differ by ~130x** — so item count is a poor predictor and the row you
+resemble depends on how you write items, not how many you keep. A board of terse one-line
+cards stays trivially cheap at thousands of items; a board whose items carry long markdown
+bodies reaches tens of megabytes at a few thousand. Measure yours rather than interpolating
+between these two: they bound the range, they do not describe a curve.
+
+A small board is effectively free to version; a large one committed on every change is not, and
+that is a reason to ignore the store rather than a reason to avoid the tool.
 
 **If you commit it,** be aware the board becomes branch-dependent: `git checkout` changes the
 board's contents, and uncommitted board writes will make git refuse the checkout. Commit or
