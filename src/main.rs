@@ -3100,7 +3100,11 @@ fn command_to_nats(command: &Commands) -> (String, serde_json::Value) {
             "next-id".to_string(),
             serde_json::json!({ "item_type": item_type }),
         ),
-        Commands::Migrate { dry_run: _ } => {
+        // `..` rather than naming each field: this arm maps every Migrate to "stats" and
+        // reads none of them, so `..` states the truth — we do not care about any field
+        // here. Naming them compiles equally well and breaks again the next time a flag is
+        // added to the variant, which is exactly what happened when --force was introduced.
+        Commands::Migrate { .. } => {
             // Migration doesn't make sense in client mode
             ("stats".to_string(), serde_json::json!({}))
         }
