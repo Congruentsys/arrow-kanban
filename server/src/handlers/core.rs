@@ -419,10 +419,48 @@ pub(crate) fn handle_update_typed(
     store: &mut KanbanStore,
     relations: &mut arrow_kanban::relations::RelationsStore,
 ) -> Result<KanbanReply, Vec<u8>> {
-    // Verify item exists
-    store
-        .get_item(&req.id)
-        .map_err(|e| error_response(&format!("{e}"), "NOT_FOUND"))?;
+    // Subject resolution consults the ITEM store first. A subject the item
+    // store does not hold may still be a graph-admitted NON-ITEM entity — a
+    // proposal id types as `proposal` through its ontology-declared prefix.
+    // Those subjects are RELATE-ONLY: they carry no item row here, so item
+    // FIELD mutations refuse by name — but the FORWARD edge spelling works,
+    // deleting the asymmetry where every proposal-anchored edge had to be
+    // hand-written from the inverse side (an asymmetry that shipped backwards
+    // into docs and refusal messages at least once because it is so easy to
+    // spell wrong).
+    let is_item = store.get_item(&req.id).is_ok();
+    if !is_item {
+        let t = arrow_kanban::relation_vocab::type_from_id(&req.id);
+        let is_entity_class = t.is_some_and(|t| {
+            ItemType::from_str_loose(t).is_none()
+                && arrow_kanban::relation_vocab::classes()
+                    .iter()
+                    .any(|c| c.name == t)
+        });
+        if !is_entity_class {
+            return Err(error_response(
+                &format!("Item not found: {}", req.id),
+                "NOT_FOUND",
+            ));
+        }
+        let wants_fields = req.title.is_some()
+            || req.priority.is_some()
+            || req.assignee.is_some()
+            || req.tags.is_some()
+            || req.body.is_some()
+            || req.related.is_some()
+            || req.depends_on.is_some();
+        if wants_fields {
+            return Err(error_response(
+                &format!(
+                    "'{}' is a {} — a graph entity with no item row here; only                      --relate/--unrelate apply to it (its record lives in its own store)",
+                    req.id,
+                    t.unwrap_or("non-item entity")
+                ),
+                "ENTITY_RELATE_ONLY",
+            ));
+        }
+    }
 
     // Validate every edge BEFORE mutating anything, so a bad relationship never
     // leaves the item half-updated.
@@ -485,7 +523,10 @@ pub(crate) fn handle_update_typed(
                 // edge added on EDIT is invisible to roadmap / critical-path / worklist /
                 // show — the flat columns stop being a projection and become a stale
                 // second opinion, which is the drift this design exists to prevent.
-                add_flat_projection(store, &req.id, pred, target);
+                // (A relate-only entity subject has no item row to project onto.)
+                if is_item {
+                    add_flat_projection(store, &req.id, pred, target);
+                }
                 added.push(format!("{pred}:{target}"));
             }
             Err(e) => eprintln!(
@@ -501,7 +542,7 @@ pub(crate) fn handle_update_typed(
         // flat removal behind it left --unrelate a silent no-op. Attempt each; report removed
         // if EITHER held the edge.
         let typed_removed = relations.remove_relation(&req.id, target, pred).is_ok();
-        let flat_removed = remove_flat_projection(store, &req.id, pred, target);
+        let flat_removed = is_item && remove_flat_projection(store, &req.id, pred, target);
         if typed_removed || flat_removed {
             removed.push(format!("{pred}:{target}"));
         } else {
