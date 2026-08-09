@@ -67,3 +67,31 @@ pub(crate) fn parse_payload<T: for<'de> serde::Deserialize<'de>>(
 pub(crate) fn states_as_strings() -> Vec<String> {
     DEFAULT_STATES.iter().map(|s| s.to_string()).collect()
 }
+
+/// Hot-reload the relation vocabulary from operator-supplied `.ttl` text.
+///
+/// Payload: `{ "ttl": "<full kanban.ttl text>" }`. The text is parsed by the
+/// SAME fail-closed loader that runs at startup; on any refusal the running
+/// vocabulary is untouched and the error reaches the operator verbatim. On
+/// success the reply reports the loaded counts and the exact delta, so the
+/// operator has evidence of what changed — never a bare "ok".
+pub fn admin_reload_vocab(payload: &[u8]) -> Vec<u8> {
+    #[derive(serde::Deserialize)]
+    struct ReloadReq {
+        ttl: String,
+    }
+    let req: ReloadReq = match parse_payload(payload) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    match arrow_kanban::relation_vocab::reload_from_ttl(&req.ttl) {
+        Ok(report) => serde_json::to_vec(&serde_json::json!({
+            "predicates_loaded": report.predicates_loaded,
+            "classes_loaded": report.classes_loaded,
+            "added": report.added,
+            "removed": report.removed,
+        }))
+        .unwrap_or_else(|_| br#"{"error":"serialization failed","code":"INTERNAL"}"#.to_vec()),
+        Err(e) => error_response(&e, "VOCAB_RELOAD_REFUSED"),
+    }
+}
