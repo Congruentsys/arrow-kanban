@@ -169,7 +169,7 @@ pub struct MoveResponse {
 
 impl MoveResponse {
     /// The pre-move status — read by the bounce verb to shape its own reply.
-    pub(crate) fn from_status(&self) -> &str {
+    pub(crate) fn pre_move_status(&self) -> &str {
         &self.from
     }
 }
@@ -370,7 +370,7 @@ pub(crate) fn handle_bounce_typed(
         store,
     )?;
     let from = match &moved {
-        KanbanReply::Move(m) => m.from_status().to_string(),
+        KanbanReply::Move(m) => m.pre_move_status().to_string(),
         _ => String::new(),
     };
 

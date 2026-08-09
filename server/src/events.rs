@@ -1127,6 +1127,7 @@ mod tests {
             reason: None,
             resolution: None,
             closed_by: None,
+            unassign: false,
         });
         assert_eq!(moved.subject_suffix(), "moved");
         assert_eq!(moved.contract_version(), "1.0");
@@ -1205,6 +1206,7 @@ mod tests {
             reason: None,
             resolution: None,
             closed_by: None,
+            unassign: false,
         })
         .replay_into(&mut store, &mut rels)
         .expect("replay move");
