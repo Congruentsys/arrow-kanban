@@ -220,6 +220,12 @@ pub struct MovedEvent {
     /// `assignee`/`author` field, which says who the item is FOR. `None` when the
     /// envelope carried no actor — an absent actor is honest; a placeholder is not.
     pub agent: Option<String>,
+    /// Additive (issue #76): the bounce verb clears the assignee, and replay
+    /// must reproduce that — `assignee: None` alone means "leave untouched" on
+    /// replay, which would resurrect the bounced executor's claim. Defaults
+    /// false so every pre-existing committed log replays byte-identically.
+    #[serde(default)]
+    pub unassign: bool,
 }
 
 /// Replay-complete record of a requeue (issue #40). Carries the RESULT — the
@@ -434,8 +440,41 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 resolution: ostr(&q, "resolution"),
                 closed_by: ostr(&q, "closed_by"),
                 agent: ostr(&q, "actor"),
+                unassign: false,
             }))
         }
+        // A claim IS a move (in_progress + assignee) at the event level — every
+        // replay/snapshot/outbox consumer sees the ordinary shape. The CAS and
+        // the bounce gate live in the handler; the event records the outcome.
+        C::Claim(req) => {
+            let q = serde_json::to_value(req).ok()?;
+            Some(MutationEvent::Moved(MovedEvent {
+                id: ostr(&rv, "id").or_else(|| ostr(&q, "id"))?,
+                from: ostr(&rv, "from").unwrap_or_default(),
+                to: "in_progress".to_string(),
+                assignee: ostr(&q, "agent"),
+                force: false,
+                reason: Some("claimed (atomic claim verb)".to_string()),
+                resolution: None,
+                closed_by: None,
+                unassign: false,
+            }))
+        }
+        // A bounce is a move to backlog whose REASON is the structured stamp
+        // (from the REPLY — the handler computed the body hash) and which
+        // CLEARS the assignee. Both must ride the event or a replayed store
+        // would lose the unrepaired-bounce gate and resurrect the claim.
+        C::Bounce(_) => Some(MutationEvent::Moved(MovedEvent {
+            id: ostr(&rv, "id")?,
+            from: ostr(&rv, "from").unwrap_or_default(),
+            to: "backlog".to_string(),
+            assignee: None,
+            force: false,
+            reason: ostr(&rv, "stamp"),
+            resolution: None,
+            closed_by: None,
+            unassign: true,
+        })),
         C::Requeue(req) => {
             // Result fields come from the REPLY (the store's adjudication —
             // attempts, landed status, dead-letter verdict); provenance comes
@@ -781,6 +820,9 @@ impl MutationEvent {
                     .map_err(|err| format!("replay move {}: {err}", e.id))?;
                 if let Some(a) = e.assignee.as_deref() {
                     let _ = store.update_assignee(&e.id, Some(a));
+                }
+                if e.unassign {
+                    let _ = store.update_assignee(&e.id, None);
                 }
                 if let Some(r) = e.resolution.as_deref() {
                     let _ = store.update_resolution(&e.id, Some(r));
@@ -1128,6 +1170,7 @@ mod tests {
             resolution: None,
             closed_by: None,
             agent: None,
+            unassign: false,
         });
         assert_eq!(moved.subject_suffix(), "moved");
         assert_eq!(moved.contract_version(), "1.0");
@@ -1324,6 +1367,59 @@ mod tests {
     /// Replay reconstructs the write from the event: Created re-inserts under its
     /// ORIGINAL id with its fields; Moved changes status; Deleted removes it;
     /// and Created replay is idempotent (a re-seen create is a no-op, not a dup error).
+    /// The additive `unassign` flag actually clears the assignee on EVENT
+    /// replay (the torn-checkpoint path a rebuilt-from-parquet acceptance test
+    /// cannot reach) — and its absence leaves the assignee untouched, so every
+    /// pre-existing committed log replays byte-identically.
+    #[test]
+    fn moved_replay_honors_the_unassign_flag_both_ways() {
+        use arrow_kanban::crud::KanbanStore;
+        use arrow_kanban::relations::RelationsStore;
+        let mut store = KanbanStore::new();
+        let mut rels = RelationsStore::new();
+        created_ev()
+            .replay_into(&mut store, &mut rels)
+            .expect("create");
+
+        let claim = |unassign: bool| {
+            MutationEvent::Moved(MovedEvent {
+                id: "CH-9".into(),
+                from: "backlog".into(),
+                to: if unassign {
+                    "backlog".into()
+                } else {
+                    "in_progress".into()
+                },
+                assignee: if unassign { None } else { Some("DGX1".into()) },
+                force: false,
+                reason: None,
+                resolution: None,
+                closed_by: None,
+                unassign,
+            })
+        };
+
+        claim(false)
+            .replay_into(&mut store, &mut rels)
+            .expect("claim replay");
+        let (_, holder) = store.status_and_assignee("CH-9").expect("read");
+        assert_eq!(
+            holder.as_deref(),
+            Some("DGX1"),
+            "claim replay sets the assignee"
+        );
+
+        claim(true)
+            .replay_into(&mut store, &mut rels)
+            .expect("bounce replay");
+        let (status, holder) = store.status_and_assignee("CH-9").expect("read");
+        assert_eq!(status, "backlog");
+        assert!(
+            holder.as_deref().unwrap_or("").is_empty(),
+            "unassign=true on replay must CLEAR the assignee (else a rebuilt              store resurrects the bounced executor's claim): {holder:?}"
+        );
+    }
+
     #[test]
     fn replay_reconstructs_and_is_idempotent() {
         use arrow_kanban::crud::KanbanStore;
@@ -1354,6 +1450,7 @@ mod tests {
             resolution: None,
             closed_by: None,
             agent: None,
+            unassign: false,
         })
         .replay_into(&mut store, &mut rels)
         .expect("replay move");
