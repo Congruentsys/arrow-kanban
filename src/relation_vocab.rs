@@ -289,6 +289,33 @@ pub struct VocabReload {
 /// the compiled vocabulary. Keep the repository `.ttl` (and its pin) in sync —
 /// the reload removes the restart from the ACCEPTANCE path, not from the
 /// durable record.
+///
+/// **Operational bar:** with this verb, EXTENDING the vocabulary requires bus
+/// access, where it previously required host access plus a service swap.
+/// Narrowing below the compiled floor stays impossible from anywhere. That
+/// trade is deliberate — it is the whole point of the change — and an operator
+/// hardening the bus should treat this verb as part of the write surface.
+///
+/// **The leak is bounded in TOTAL, not just per call.** Each effective reload
+/// leaks one vocabulary (~9 kB measured). Two guards keep the sequence finite
+/// on a process every fleet write depends on: a reload whose delta is EMPTY
+/// returns its report *without* swapping or leaking (a retry loop re-sending
+/// the same ttl — the realistic unbounded caller — leaks nothing), and
+/// effective reloads are capped per process ([`RELOAD_BUDGET`]) with a refusal
+/// that says to restart — far beyond any real operator need, and it turns
+/// "unbounded" into ~1 MB worst-case.
+/// Effective (leaking) reloads allowed per process lifetime. 100 is far beyond
+/// any real operator sequence; at ~9 kB per effective reload the worst case is
+/// about a megabyte, and the refusal names the remedy (restart).
+pub const RELOAD_BUDGET: usize = 100;
+
+static RELOADS_USED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn reset_reload_budget_for_tests() {
+    RELOADS_USED.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
 pub fn reload_from_ttl(ttl: &str) -> Result<VocabReload, String> {
     let preds = parse_object_properties(ttl)
         .map_err(|e| format!("ttl failed to parse ({e}) — the running vocabulary is untouched"))?;
@@ -335,6 +362,28 @@ pub fn reload_from_ttl(ttl: &str) -> Result<VocabReload, String> {
         added,
         removed,
     };
+
+    // NO-OP SKIP: an empty delta means the running vocabulary already IS this
+    // set — report success without swapping, so nothing leaks. This is what
+    // defeats the realistic unbounded caller (a retry loop re-sends the same
+    // ttl), measured at ~9 kB per effective reload on the fleet's single
+    // writer.
+    if report.added.is_empty() && report.removed.is_empty() {
+        return Ok(report);
+    }
+
+    // BUDGET: effective reloads are capped per process. Unbounded-in-total is
+    // an OOM path on the process every fleet write depends on; bounded is one
+    // megabyte and a clear message.
+    let used = RELOADS_USED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if used >= RELOAD_BUDGET {
+        RELOADS_USED.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        return Err(format!(
+            "reload budget exhausted ({RELOAD_BUDGET} effective reloads this process) — \
+             restart the writer to continue reloading; the running vocabulary is untouched"
+        ));
+    }
+
     let leaked_preds: &'static [Predicate] = Box::leak(preds.into_boxed_slice());
     let leaked_classes: &'static [EntityClass] = Box::leak(classes.into_boxed_slice());
     *LIVE_VOCAB.write().expect("vocab lock poisoned") = Some((leaked_preds, leaked_classes));
@@ -1356,7 +1405,11 @@ mod tests {
     // test is recovered so one red arm cannot cascade into unrelated reds.
     fn reload_test_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        let g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Budget is process-global; every serial reload test starts fresh so
+        // ordering cannot leak a cap refusal into an unrelated arm.
+        reset_reload_budget_for_tests();
+        g
     }
 
     #[test]
@@ -1427,6 +1480,50 @@ mod tests {
             "the running set survives the refusal"
         );
 
+        reload_embedded().expect("restore");
+    }
+
+    #[test]
+    fn a_no_op_reload_does_not_consume_the_budget_and_a_loop_hits_the_cap() {
+        let _g = reload_test_lock();
+        reset_reload_budget_for_tests();
+        reload_embedded().expect("embedded baseline");
+
+        // The retry-loop case: many same-ttl reloads succeed, leak nothing,
+        // and consume none of the budget.
+        for _ in 0..(RELOAD_BUDGET + 10) {
+            let r = reload_embedded().expect("no-op reload must keep succeeding");
+            assert!(r.added.is_empty() && r.removed.is_empty());
+        }
+
+        // EFFECTIVE reloads (alternating deltas so each swap is real) hit the
+        // cap with a refusal that names the remedy — and the running set
+        // survives the refusal.
+        let extended = format!(
+            "{KANBAN_TTL}\n\nkb:budgetProbe a owl:ObjectProperty ;\n    rdfs:label \"budgetProbe\" .\n"
+        );
+        let mut refused = None;
+        for i in 0..(RELOAD_BUDGET + 10) {
+            let ttl: &str = if i % 2 == 0 { &extended } else { KANBAN_TTL };
+            match reload_from_ttl(ttl) {
+                Ok(_) => {}
+                Err(e) => {
+                    refused = Some(e);
+                    break;
+                }
+            }
+        }
+        let err = refused.expect("the effective-reload loop must hit the budget");
+        assert!(
+            err.contains("budget") && err.contains("restart"),
+            "the refusal names the cap and the remedy: {err}"
+        );
+        assert!(
+            lookup("dependsOn").is_some(),
+            "the running set survives the refusal"
+        );
+
+        reset_reload_budget_for_tests();
         reload_embedded().expect("restore");
     }
 
