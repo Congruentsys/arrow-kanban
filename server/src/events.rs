@@ -457,6 +457,13 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 reason: Some("claimed (atomic claim verb)".to_string()),
                 resolution: None,
                 closed_by: None,
+                // The claimant IS the actor here, so this reads the same field as
+                // `assignee` above — but they answer different questions and merely
+                // coincide for this verb: `assignee` is who the item is FOR, `agent`
+                // is who performed the mutation. Read separately so a future verb
+                // that claims on someone else's behalf does not silently attribute
+                // the act to its beneficiary.
+                agent: ostr(&q, "agent"),
                 unassign: false,
             }))
         }
@@ -464,7 +471,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
         // (from the REPLY — the handler computed the body hash) and which
         // CLEARS the assignee. Both must ride the event or a replayed store
         // would lose the unrepaired-bounce gate and resurrect the claim.
-        C::Bounce(_) => Some(MutationEvent::Moved(MovedEvent {
+        C::Bounce(req) => Some(MutationEvent::Moved(MovedEvent {
             id: ostr(&rv, "id")?,
             from: ostr(&rv, "from").unwrap_or_default(),
             to: "backlog".to_string(),
@@ -473,6 +480,13 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
             reason: ostr(&rv, "stamp"),
             resolution: None,
             closed_by: None,
+            // The bouncer is the actor. Taken from the REQUEST, not by re-parsing
+            // the stamp in the reply: the stamp is a JSON string INSIDE a string,
+            // and attribution must not depend on parsing our own prose back out.
+            // This is why the arm binds `req` where it previously discarded it.
+            agent: serde_json::to_value(req)
+                .ok()
+                .and_then(|q| ostr(&q, "agent")),
             unassign: true,
         })),
         C::Requeue(req) => {
@@ -1269,11 +1283,28 @@ mod tests {
                 serde_json::json!({"source_id":"CH-9","target_id":"CH-8","predicate":"blocks","actor":"DGX2"}),
                 serde_json::json!({"source":"CH-9","target":"CH-8","predicate":"blocks"}),
             ),
+            // ── claim/bounce: the acting agent rides the REQUEST, not the envelope ──
+            // These two verbs carry their own `agent` field (the CAS comparand), so
+            // they populate from it rather than from `actor`. Same property, second
+            // source — and they are in this table precisely because the source
+            // differs: a change that only ever read `actor` would leave both silently
+            // unattributed while the nine arms above stayed green.
+            (
+                "claim",
+                serde_json::json!({"id":"CH-9","agent":"DGX2"}),
+                serde_json::json!({"id":"CH-9","from":"backlog"}),
+            ),
+            (
+                "bounce",
+                serde_json::json!({"id":"CH-9","agent":"DGX2","reason":"body contradicts canon"}),
+                serde_json::json!({"id":"CH-9","from":"in_progress","stamp":"{\"bounce\":true}"}),
+            ),
         ];
 
         // A floor: if the table ever stops covering the sites it claims to, that is
         // the scanner being broken, not the code being clean.
-        assert_eq!(cases.len(), 9, "one arm per envelope-populated site");
+        // 9 envelope-`actor` sites + 2 request-`agent` sites (claim, bounce).
+        assert_eq!(cases.len(), 11, "one arm per agent-populated site");
 
         for (verb, payload, reply_value) in cases {
             let cmd = crate::engine::parse(verb, payload.to_string().as_bytes())
@@ -1395,6 +1426,9 @@ mod tests {
                 reason: None,
                 resolution: None,
                 closed_by: None,
+                // None is right here: this fixture exercises UNASSIGN replay, not
+                // attribution. A value would assert something the test does not read.
+                agent: None,
                 unassign,
             })
         };

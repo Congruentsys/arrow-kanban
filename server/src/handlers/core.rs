@@ -343,6 +343,8 @@ pub(crate) fn handle_claim_typed(
     handle_move_typed(
         MoveRequest {
             id: req.id,
+            // The claimant is the actor. Cloned because `assignee` below moves it.
+            actor: Some(req.agent.clone()),
             status: "in_progress".to_string(),
             assignee: Some(req.agent),
             force: false,
@@ -382,6 +384,9 @@ pub(crate) fn handle_bounce_typed(
     let moved = handle_move_typed(
         MoveRequest {
             id: req.id.clone(),
+            // The bouncer is the actor, even though the bounce CLEARS the assignee —
+            // exactly the case where "who performed it" and "who it is for" diverge.
+            actor: Some(req.agent.clone()),
             status: "backlog".to_string(),
             assignee: None,
             force: false,
