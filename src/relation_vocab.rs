@@ -181,9 +181,15 @@ fn live_vocab() -> (&'static [Predicate], &'static [EntityClass]) {
     if let Some(v) = *LIVE_VOCAB.read().expect("vocab lock poisoned") {
         return v;
     }
-    let initial = (initial_predicates(), initial_classes());
+    // Single-flight the embedded init: racing threads previously EACH parsed
+    // and interned a full vocabulary with only the first kept — a bounded but
+    // real N-threads×~9 kB leak at startup on the fleet's single writer (and
+    // the jitter that made the no-op-allocates-nothing arm nondeterministic).
+    static INIT: std::sync::OnceLock<(&'static [Predicate], &'static [EntityClass])> =
+        std::sync::OnceLock::new();
+    let initial = *INIT.get_or_init(|| (initial_predicates(), initial_classes()));
     let mut w = LIVE_VOCAB.write().expect("vocab lock poisoned");
-    // First writer wins; a racing initializer computed the same embedded set.
+    // A reload that landed between the read-miss and here still wins.
     *w.get_or_insert(initial)
 }
 
@@ -198,7 +204,7 @@ pub fn predicates() -> &'static [Predicate] {
 
 fn initial_predicates() -> &'static [Predicate] {
     match parse_object_properties(KANBAN_TTL) {
-        Ok(v) if !v.is_empty() => &*Box::leak(v.into_boxed_slice()),
+        Ok(v) if !v.is_empty() => intern_predicates(v),
         Ok(_) => {
             eprintln!(
                 "warning: kanban.ttl declares no owl:ObjectProperty — using the compiled fallback vocabulary"
@@ -243,7 +249,7 @@ fn fallback_classes() -> &'static [EntityClass] {
 
 fn initial_classes() -> &'static [EntityClass] {
     match parse_entity_classes(KANBAN_TTL) {
-        Ok(v) if !v.is_empty() => &*Box::leak(v.into_boxed_slice()),
+        Ok(v) if !v.is_empty() => intern_classes(v),
         Ok(_) | Err(_) => {
             eprintln!(
                 "warning: kanban.ttl yielded no owl:Class declarations (or failed to parse) — \
@@ -296,14 +302,16 @@ pub struct VocabReload {
 /// trade is deliberate — it is the whole point of the change — and an operator
 /// hardening the bus should treat this verb as part of the write surface.
 ///
-/// **The leak is bounded in TOTAL, not just per call.** Each effective reload
-/// leaks one vocabulary (~9 kB measured). Two guards keep the sequence finite
-/// on a process every fleet write depends on: a reload whose delta is EMPTY
-/// returns its report *without* swapping or leaking (a retry loop re-sending
-/// the same ttl — the realistic unbounded caller — leaks nothing), and
-/// effective reloads are capped per process ([`RELOAD_BUDGET`]) with a refusal
-/// that says to restart — far beyond any real operator need, and it turns
-/// "unbounded" into ~1 MB worst-case.
+/// **A no-op reload allocates nothing permanent, and effective reloads are
+/// bounded in TOTAL.** Parsing produces OWNED values; interning (the ~9 kB
+/// permanent allocation per vocabulary) happens only on the swap path, which
+/// sits behind two guards on a process every fleet write depends on: a reload
+/// whose delta is EMPTY returns its report *without* swapping or interning (a
+/// retry loop re-sending the same ttl — the realistic unbounded caller —
+/// allocates nothing permanent, pinned by test), and effective reloads are
+/// capped per process ([`RELOAD_BUDGET`]) with a refusal that says to restart
+/// — far beyond any real operator need, and it turns "unbounded" into ~1 MB
+/// worst-case.
 /// Effective (leaking) reloads allowed per process lifetime. 100 is far beyond
 /// any real operator sequence; at ~9 kB per effective reload the worst case is
 /// about a megabyte, and the refusal names the remedy (restart).
@@ -384,9 +392,9 @@ pub fn reload_from_ttl(ttl: &str) -> Result<VocabReload, String> {
         ));
     }
 
-    let leaked_preds: &'static [Predicate] = Box::leak(preds.into_boxed_slice());
-    let leaked_classes: &'static [EntityClass] = Box::leak(classes.into_boxed_slice());
-    *LIVE_VOCAB.write().expect("vocab lock poisoned") = Some((leaked_preds, leaked_classes));
+    // The ONLY interning site on the reload path: post-skip, post-budget.
+    *LIVE_VOCAB.write().expect("vocab lock poisoned") =
+        Some((intern_predicates(preds), intern_classes(classes)));
     Ok(report)
 }
 
@@ -421,7 +429,7 @@ fn logical_statements(ttl: &str) -> Result<Vec<String>, String> {
 /// Parse the `owl:Class` declarations. Same subset reader posture as
 /// [`parse_object_properties`]: anything unreadable is an `Err`, which
 /// [`classes`] treats as fail-closed.
-fn parse_entity_classes(ttl: &str) -> Result<Vec<EntityClass>, String> {
+fn parse_entity_classes(ttl: &str) -> Result<Vec<OwnedClass>, String> {
     let mut out = Vec::new();
     for stmt in logical_statements(ttl)? {
         let stmt = stmt.trim().trim_end_matches('.').trim();
@@ -442,22 +450,88 @@ fn parse_entity_classes(ttl: &str) -> Result<Vec<EntityClass>, String> {
                 .split_once(char::is_whitespace)
                 .ok_or_else(|| format!("bad clause '{clause}' on kb:{local}"))?;
             if pred == "kb:idPrefix" {
-                id_prefix = Some(leak_str(quoted(rest)?.to_ascii_uppercase()));
+                id_prefix = Some(quoted(rest)?.to_ascii_uppercase());
             }
         }
-        out.push(EntityClass {
-            name: leak_str(local.to_ascii_lowercase()),
+        out.push(OwnedClass {
+            name: local.to_ascii_lowercase(),
             id_prefix,
         });
     }
     Ok(out)
 }
 
+/// What the PARSERS produce: owned values, no permanent allocation. Interning
+/// (leaking to `&'static`) happens ONLY on the swap path — after the no-op
+/// skip and the budget — so a reload that changes nothing allocates nothing
+/// permanent. (Round 2 of the review measured the leak-in-parser shape at
+/// ~6 kB per call with the swap guards already in place.)
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OwnedPredicate {
+    name: String,
+    /// Empty = "any item" (the `kb:Item` convention), enforced non-empty otherwise at parse.
+    domain: Vec<String>,
+    range: Vec<String>,
+    inverse: Option<String>,
+    doc: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OwnedClass {
+    name: String,
+    id_prefix: Option<String>,
+}
+
+/// Intern a parsed predicate set: the ONLY place parse output becomes
+/// `&'static`. Callers: the once-per-process startup init and the
+/// budget-capped effective-reload swap.
+fn intern_predicates(preds: Vec<OwnedPredicate>) -> &'static [Predicate] {
+    let interned: Vec<Predicate> = preds
+        .into_iter()
+        .map(|p| Predicate {
+            name: leak_str(p.name),
+            domain: intern_class_list(p.domain),
+            range: intern_class_list(p.range),
+            inverse: p.inverse.map(leak_str),
+            doc: leak_str(p.doc),
+        })
+        .collect();
+    Box::leak(interned.into_boxed_slice())
+}
+
+fn intern_class_list(list: Vec<String>) -> &'static [&'static str] {
+    if list.is_empty() {
+        return &[]; // "any item" — never allocated
+    }
+    leak_strs(list.into_iter().map(leak_str).collect())
+}
+
+fn intern_classes(classes: Vec<OwnedClass>) -> &'static [EntityClass] {
+    let interned: Vec<EntityClass> = classes
+        .into_iter()
+        .map(|c| EntityClass {
+            name: leak_str(c.name),
+            id_prefix: c.id_prefix.map(leak_str),
+        })
+        .collect();
+    Box::leak(interned.into_boxed_slice())
+}
+
+/// Test-visible count of permanent (leaked) string allocations — how the
+/// battery asserts that a NO-OP reload allocates nothing permanent.
+#[cfg(test)]
+pub(crate) static LEAK_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 fn leak_str(s: String) -> &'static str {
+    #[cfg(test)]
+    LEAK_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     Box::leak(s.into_boxed_str())
 }
 
 fn leak_strs(v: Vec<&'static str>) -> &'static [&'static str] {
+    #[cfg(test)]
+    LEAK_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     Box::leak(v.into_boxed_slice())
 }
 
@@ -472,23 +546,23 @@ fn kb_local(term: &str) -> Result<&str, String> {
 /// `kb:Item` means "any item type" and maps to the EMPTY slice (the `validate_edge`
 /// convention); a comma list of concrete classes is read as a UNION (either accepted) —
 /// see the `kb:measures` note in the `.ttl`.
-fn class_list(rest: &str) -> Result<&'static [&'static str], String> {
+fn class_list(rest: &str) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     for term in rest.split(',') {
         let local = kb_local(term)?;
         if local == "Item" {
-            return Ok(&[]); // any — dominates a union
+            return Ok(Vec::new()); // any — dominates a union
         }
-        out.push(leak_str(local.to_ascii_lowercase()));
+        out.push(local.to_ascii_lowercase());
     }
     if out.is_empty() {
         return Err(format!("empty class list '{rest}'"));
     }
-    Ok(leak_strs(out))
+    Ok(out)
 }
 
 /// Extract a quoted literal (`"..."`) from a clause remainder.
-fn quoted(rest: &str) -> Result<&'static str, String> {
+fn quoted(rest: &str) -> Result<String, String> {
     let start = rest
         .find('"')
         .ok_or_else(|| format!("expected a quoted literal in '{rest}'"))?;
@@ -496,7 +570,7 @@ fn quoted(rest: &str) -> Result<&'static str, String> {
         .rfind('"')
         .filter(|e| *e > start)
         .ok_or_else(|| format!("unterminated literal in '{rest}'"))?;
-    Ok(leak_str(rest[start + 1..end].to_string()))
+    Ok(rest[start + 1..end].to_string())
 }
 
 /// Split on `sep`, but never inside a `"..."` literal (so a comment may contain `;`).
@@ -525,10 +599,10 @@ fn split_outside_quotes(s: &str, sep: char) -> Vec<&str> {
 /// literals may contain `;`), objects by `,`. Anything the reader cannot make sense of
 /// is an `Err` — which [`predicates`] treats as fail-closed, never as "accept
 /// everything".
-fn parse_object_properties(ttl: &str) -> Result<Vec<Predicate>, String> {
+fn parse_object_properties(ttl: &str) -> Result<Vec<OwnedPredicate>, String> {
     let statements = logical_statements(ttl)?;
 
-    let mut out: Vec<Predicate> = Vec::new();
+    let mut out: Vec<OwnedPredicate> = Vec::new();
     for stmt in &statements {
         let stmt = stmt.trim().trim_end_matches('.').trim();
         let mut clauses = split_outside_quotes(stmt, ';').into_iter();
@@ -540,9 +614,9 @@ fn parse_object_properties(ttl: &str) -> Result<Vec<Predicate>, String> {
         }
         let local = kb_local(subject)?;
 
-        let (mut domain, mut range): (&'static [&'static str], &'static [&'static str]) =
-            (&[], &[]);
-        let (mut inverse, mut label, mut doc) = (None, None, None);
+        let (mut domain, mut range): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+        let (mut inverse, mut label, mut doc): (Option<String>, Option<String>, Option<String>) =
+            (None, None, None);
         for clause in clauses {
             let clause = clause.trim();
             if clause.is_empty() {
@@ -554,7 +628,7 @@ fn parse_object_properties(ttl: &str) -> Result<Vec<Predicate>, String> {
             match pred {
                 "rdfs:domain" => domain = class_list(rest)?,
                 "rdfs:range" => range = class_list(rest)?,
-                "owl:inverseOf" => inverse = Some(leak_str(kb_local(rest)?.to_string())),
+                "owl:inverseOf" => inverse = Some(kb_local(rest)?.to_string()),
                 "rdfs:label" => label = Some(quoted(rest)?),
                 "rdfs:comment" => doc = Some(quoted(rest)?),
                 // Tolerate future metadata clauses — fail-closed is about the edge
@@ -562,18 +636,18 @@ fn parse_object_properties(ttl: &str) -> Result<Vec<Predicate>, String> {
                 _ => {}
             }
         }
-        out.push(Predicate {
-            name: label.unwrap_or_else(|| leak_str(local.to_string())),
+        out.push(OwnedPredicate {
+            name: label.unwrap_or_else(|| local.to_string()),
             domain,
             range,
             inverse,
-            doc: doc.unwrap_or(""),
+            doc: doc.unwrap_or_default(),
         });
     }
 
     // Referential sanity: every declared inverse must resolve within the set.
     for p in &out {
-        if let Some(inv) = p.inverse
+        if let Some(inv) = p.inverse.as_deref()
             && !out.iter().any(|q| q.name == inv)
         {
             return Err(format!("'{}' names a missing inverse '{inv}'", p.name));
@@ -994,7 +1068,7 @@ mod tests {
         assert!(
             loaded.len() >= FALLBACK_PREDICATES.len(),
             "the .ttl lost predicates: ttl={:?} fallback={:?}",
-            loaded.iter().map(|p| p.name).collect::<Vec<_>>(),
+            loaded.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
             FALLBACK_PREDICATES
                 .iter()
                 .map(|p| p.name)
@@ -1007,7 +1081,12 @@ mod tests {
                 .unwrap_or_else(|| panic!("'{}' missing from the .ttl", f.name));
             assert_eq!(l.domain, f.domain, "'{}' domain differs", f.name);
             assert_eq!(l.range, f.range, "'{}' range differs", f.name);
-            assert_eq!(l.inverse, f.inverse, "'{}' inverse differs", f.name);
+            assert_eq!(
+                l.inverse.as_deref(),
+                f.inverse,
+                "'{}' inverse differs",
+                f.name
+            );
         }
     }
 
@@ -1175,8 +1254,9 @@ mod tests {
         assert_eq!(live.len(), fresh.len());
         for f in &fresh {
             assert!(
-                live.iter()
-                    .any(|p| p.name == f.name && p.doc == f.doc && p.inverse == f.inverse),
+                live.iter().any(|p| p.name == f.name
+                    && p.doc == f.doc
+                    && p.inverse == f.inverse.as_deref()),
                 "'{}' not served by predicates()",
                 f.name
             );
@@ -1525,6 +1605,29 @@ mod tests {
 
         reset_reload_budget_for_tests();
         reload_embedded().expect("restore");
+    }
+
+    /// The round-2 property: a NO-OP reload allocates NOTHING permanent — not
+    /// in the swap (round 1's skip) and not in the PARSE either. Interning by
+    /// leaking inside the parser would make every retry-loop call leak even
+    /// though the skip fires, which is exactly the third site round 2 found.
+    #[test]
+    fn a_no_op_reload_allocates_nothing_permanent() {
+        let _g = reload_test_lock();
+        reset_reload_budget_for_tests();
+        reload_embedded().expect("prime the live set");
+
+        let before = LEAK_CALLS.load(std::sync::atomic::Ordering::SeqCst);
+        let r = reload_embedded().expect("no-op reload");
+        assert!(
+            r.added.is_empty() && r.removed.is_empty(),
+            "probe must be a no-op"
+        );
+        let leaked = LEAK_CALLS.load(std::sync::atomic::Ordering::SeqCst) - before;
+        assert_eq!(
+            leaked, 0,
+            "a no-op reload permanently allocated {leaked} time(s) — the parse path is leaking"
+        );
     }
 
     #[test]
