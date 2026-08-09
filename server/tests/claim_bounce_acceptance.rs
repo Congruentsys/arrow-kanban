@@ -130,6 +130,57 @@ fn bounce_is_atomic_and_the_unrepaired_gate_refuses_the_next_claim() {
     );
 }
 
+/// The reviewer's reproduction (PR #77 round 1): an ORDINARY later move to
+/// backlog — a board-hygiene sweep's normal job — must NOT displace the bounce
+/// stamp and disarm the gate. The un-gate is the body edit, never "any
+/// subsequent backlog move". Control first, so a never-firing gate cannot pass.
+#[test]
+fn an_ordinary_backlog_move_does_not_displace_the_bounce_gate() {
+    let (_tmp, mut engine) = engine_with(&["CH-9"]);
+
+    let c = json(&engine.dispatch("kanban.cmd.claim", br#"{"id":"CH-9","agent":"DGX1"}"#));
+    assert!(c.get("error").is_none(), "{c}");
+    let b = json(&engine.dispatch(
+        "kanban.cmd.bounce",
+        br#"{"id":"CH-9","agent":"DGX1","reason":"missing Docs: line"}"#,
+    ));
+    assert!(b.get("error").is_none(), "{b}");
+
+    // CONTROL: the gate is live before the displacement attempt.
+    let refused = json(&engine.dispatch("kanban.cmd.claim", br#"{"id":"CH-9","agent":"Mini"}"#));
+    assert_eq!(
+        refused["code"], "CLAIM_BOUNCED",
+        "control — the gate must be live: {refused}"
+    );
+
+    // The displacing landing: an ordinary move to backlog with a prose reason.
+    let mv = json(&engine.dispatch(
+        "kanban.cmd.move",
+        br#"{"id":"CH-9","status":"backlog","reason":"housekeeping sweep"}"#,
+    ));
+    assert!(
+        mv.get("error").is_none(),
+        "the ordinary move itself is legal: {mv}"
+    );
+
+    // THE POINT: the gate still fires — the newest BOUNCE landing governs,
+    // not the newest landing overall.
+    let refused = json(&engine.dispatch("kanban.cmd.claim", br#"{"id":"CH-9","agent":"Mini"}"#));
+    assert_eq!(
+        refused["code"], "CLAIM_BOUNCED",
+        "a non-bounce landing must not disarm the gate: {refused}"
+    );
+
+    // And the real un-gate still works.
+    let up = json(&engine.dispatch(
+        "kanban.cmd.update",
+        br#"{"id":"CH-9","body":"contract v2 - Docs line added"}"#,
+    ));
+    assert!(up.get("error").is_none(), "{up}");
+    let ok = json(&engine.dispatch("kanban.cmd.claim", br#"{"id":"CH-9","agent":"Mini"}"#));
+    assert!(ok.get("error").is_none(), "the body edit un-gates: {ok}");
+}
+
 /// The bounce survives REPLAY: rebuild the store from the committed log and the
 /// unrepaired gate still refuses — the stamp rides the event, and the unassign
 /// is replayed (an event that left the old assignee in place would resurrect

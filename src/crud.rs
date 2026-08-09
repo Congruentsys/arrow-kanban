@@ -415,12 +415,16 @@ impl KanbanStore {
         })
     }
 
-    /// The reason recorded on the item's LATEST run that landed on `to_status`
-    /// (run rows are appended in order, so the last match is the newest). The
-    /// bounce verb writes a structured JSON reason here and the claim verb
-    /// reads it back — the server parsing its OWN format, never foreign prose.
-    pub fn latest_run_reason_landing(&self, id: &str, to_status: &str) -> Option<String> {
-        let mut latest: Option<String> = None;
+    /// ALL reasons recorded on runs that landed `id` on `to_status`, in append
+    /// order (oldest first). The bounce verb writes a structured JSON reason
+    /// here and the claim verb reads it back — the server parsing its OWN
+    /// format, never foreign prose. Returning the FULL ordered list (rather
+    /// than only the newest landing) is load-bearing: an ordinary later move
+    /// to backlog — a board-hygiene sweep's normal job — must not displace a
+    /// bounce stamp and silently disarm the gate; the caller filters for the
+    /// newest entry that parses as a bounce.
+    pub fn run_reasons_landing(&self, id: &str, to_status: &str) -> Vec<Option<String>> {
+        let mut out = Vec::new();
         for batch in &self.runs_batches {
             let ids = batch
                 .column(runs_col::ITEM_ID)
@@ -439,15 +443,15 @@ impl KanbanStore {
                 .expect("runs reason column");
             for i in 0..batch.num_rows() {
                 if ids.value(i) == id && tos.value(i) == to_status {
-                    latest = if reasons.is_null(i) {
+                    out.push(if reasons.is_null(i) {
                         None
                     } else {
                         Some(reasons.value(i).to_string())
-                    };
+                    });
                 }
             }
         }
-        latest
+        out
     }
 
     pub fn status_and_assignee(&self, id: &str) -> Result<(String, Option<String>)> {

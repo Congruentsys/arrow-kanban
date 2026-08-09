@@ -296,9 +296,19 @@ pub(crate) fn handle_claim_typed(
     // body has been edited. The bounce verb stamped the body hash it refused
     // at; an unchanged hash means unrepaired, and the claim refuses natively —
     // no external check script required.
-    if let Some(reason) = store.latest_run_reason_landing(&req.id, "backlog")
-        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&reason)
-        && v.get("bounce").and_then(|b| b.as_bool()) == Some(true)
+    //
+    // The stamp is the NEWEST landing that PARSES AS A BOUNCE — filter first,
+    // then take newest. Taking the newest landing overall would let any later
+    // ordinary move to backlog (a board-hygiene sweep's normal job) displace
+    // the stamp and silently disarm the gate; the un-gate must stay "the body
+    // edit", never "any subsequent backlog move".
+    if let Some(v) = store
+        .run_reasons_landing(&req.id, "backlog")
+        .iter()
+        .rev()
+        .filter_map(|r| r.as_deref())
+        .filter_map(|r| serde_json::from_str::<serde_json::Value>(r).ok())
+        .find(|v| v.get("bounce").and_then(|b| b.as_bool()) == Some(true))
     {
         let stamped = v
             .get("body_sha")
