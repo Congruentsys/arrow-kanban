@@ -285,7 +285,7 @@ kb:idPrefix a owl:AnnotationProperty ;
 kb:Proposal a owl:Class ;
     kb:idPrefix "PROP" ;
     rdfs:label "Proposal" ;
-    rdfs:comment "A graph-native code-review proposal (PROP-2000+; ProposalStore). Distinct kind, NOT a board ItemType: its lifecycle is open/approved/merged/closed. A first-class relation SUBJECT and TARGET: nk update PROP-X --relate writes the forward spelling (relate-only — item fields refuse, since the record lives in the ProposalStore)." .
+    rdfs:comment "A graph-native code-review proposal (PROP-2000+; ProposalStore). Distinct kind, NOT a board ItemType: its lifecycle is open/approved/merged/closed. A first-class relation SUBJECT and TARGET: arrow-kanban update PROP-X --relate writes the forward spelling (relate-only — item fields refuse, since the record lives in the ProposalStore)." .
 
 kb:Comment a owl:Class ;
     kb:idPrefix "CMT" ;
