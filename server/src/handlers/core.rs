@@ -167,6 +167,13 @@ pub struct MoveResponse {
     resolution: Option<String>,
 }
 
+impl MoveResponse {
+    /// The pre-move status — read by the bounce verb to shape its own reply.
+    pub(crate) fn pre_move_status(&self) -> &str {
+        &self.from
+    }
+}
+
 pub(crate) fn handle_move_typed(
     req: MoveRequest,
     store: &mut KanbanStore,
@@ -239,6 +246,168 @@ pub(crate) fn handle_move_typed(
         to: req.status,
         resolution: req.resolution,
     }))
+}
+
+// ── Atomic claim / bounce (issue #76) ───────────────────────────────────────
+//
+// Claims used to be COMMENT CONVENTIONS raced on comment order, and bounce
+// state lived in external scripts. These verbs promote both to the single
+// writer — the natural compare-and-set point — with typed refusals that name
+// the holder instead of asking agents to adjudicate comment timestamps.
+//
+// Both delegate their state change to `handle_move_typed`, so the committed
+// event stream sees an ordinary `Moved` and every replay/snapshot/outbox
+// consumer works unchanged.
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ClaimRequest {
+    id: String,
+    /// The claiming agent — factual identity, the CAS comparand.
+    agent: String,
+}
+
+pub(crate) fn handle_claim_typed(
+    req: ClaimRequest,
+    store: &mut KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
+    let (_status, holder) = store
+        .status_and_assignee(&req.id)
+        .map_err(|e| error_response(&format!("{e}"), "NOT_FOUND"))?;
+
+    // CAS: an item held by ANOTHER agent refuses, naming the holder — the
+    // loser needs no comment adjudication, the refusal IS the adjudication.
+    // (Stricter than the in_progress-only move guard: a claim takes UNCLAIMED
+    // work, so any other holder refuses regardless of status. Re-claiming your
+    // own item is idempotent and allowed.)
+    if let Some(holder) = holder.as_deref()
+        && !holder.is_empty()
+        && holder != req.agent
+    {
+        return Err(error_response(
+            &format!(
+                "'{}' is already claimed by {holder} — first claim wins; pick another item or                  coordinate a handover with the holder",
+                req.id
+            ),
+            "CLAIM_HELD",
+        ));
+    }
+
+    // A bounce is a refused CONTRACT: the item is only re-claimable once its
+    // body has been edited. The bounce verb stamped the body hash it refused
+    // at; an unchanged hash means unrepaired, and the claim refuses natively —
+    // no external check script required.
+    //
+    // The stamp is the NEWEST landing that PARSES AS A BOUNCE — filter first,
+    // then take newest. Taking the newest landing overall would let any later
+    // ordinary move to backlog (a board-hygiene sweep's normal job) displace
+    // the stamp and silently disarm the gate; the un-gate must stay "the body
+    // edit", never "any subsequent backlog move".
+    if let Some(v) = store
+        .run_reasons_landing(&req.id, "backlog")
+        .iter()
+        .rev()
+        .filter_map(|r| r.as_deref())
+        .filter_map(|r| serde_json::from_str::<serde_json::Value>(r).ok())
+        .find(|v| v.get("bounce").and_then(|b| b.as_bool()) == Some(true))
+    {
+        let stamped = v
+            .get("body_sha")
+            .and_then(|x| x.as_str())
+            .map(str::to_string);
+        let current = store
+            .body_hash_of(&req.id)
+            .map_err(|e| error_response(&format!("{e}"), "NOT_FOUND"))?;
+        if stamped == current {
+            return Err(error_response(
+                &format!(
+                    "'{}' carries an UNREPAIRED bounce (the body is unchanged since the bounce                      stamped it) — the contract was refused, and the filer/planner must edit the                      body before it is claimable again",
+                    req.id
+                ),
+                "CLAIM_BOUNCED",
+            ));
+        }
+    }
+
+    handle_move_typed(
+        MoveRequest {
+            id: req.id,
+            status: "in_progress".to_string(),
+            assignee: Some(req.agent),
+            force: false,
+            reason: Some("claimed (atomic claim verb)".to_string()),
+            resolution: None,
+            closed_by: None,
+        },
+        store,
+    )
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BounceRequest {
+    id: String,
+    agent: String,
+    reason: String,
+}
+
+pub(crate) fn handle_bounce_typed(
+    req: BounceRequest,
+    store: &mut KanbanStore,
+) -> Result<KanbanReply, Vec<u8>> {
+    let body_sha = store
+        .body_hash_of(&req.id)
+        .map_err(|e| error_response(&format!("{e}"), "NOT_FOUND"))?;
+
+    // The structured stamp the claim verb reads back — the server parses its
+    // OWN format here, never foreign prose.
+    let stamp = serde_json::json!({
+        "bounce": true,
+        "body_sha": body_sha,
+        "agent": req.agent,
+        "reason": req.reason,
+    })
+    .to_string();
+
+    let moved = handle_move_typed(
+        MoveRequest {
+            id: req.id.clone(),
+            status: "backlog".to_string(),
+            assignee: None,
+            force: false,
+            reason: Some(stamp.clone()),
+            resolution: None,
+            closed_by: None,
+        },
+        store,
+    )?;
+    let from = match &moved {
+        KanbanReply::Move(m) => m.pre_move_status().to_string(),
+        _ => String::new(),
+    };
+
+    // Unassign — the bounce returns the item to the pool. (A move with no
+    // assignee leaves the column untouched, so this is explicit.)
+    store
+        .update_assignee(&req.id, None)
+        .map_err(|e| error_response(&format!("{e}"), "ASSIGN_FAILED"))?;
+
+    // The human notification, in the exact line-start marker format the
+    // fleet's bounce counters already match on.
+    let sha_display = body_sha.as_deref().unwrap_or("none");
+    let comment = format!(
+        "[workit bounce — {}, server-verb, body-sha:{}] {}",
+        req.agent, sha_display, req.reason
+    );
+    store
+        .add_comment(&req.id, &comment, Some(&req.agent))
+        .map_err(|e| error_response(&format!("{e}"), "COMMENT_FAILED"))?;
+
+    Ok(KanbanReply::Value(serde_json::json!({
+        "id": req.id,
+        "from": from,
+        "to": "backlog",
+        "body_sha": body_sha,
+        "stamp": stamp,
+    })))
 }
 
 // ── Requeue (issue #40) ──────────────────────────────────────────────────────
