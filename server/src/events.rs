@@ -1177,6 +1177,59 @@ mod tests {
     /// Replay reconstructs the write from the event: Created re-inserts under its
     /// ORIGINAL id with its fields; Moved changes status; Deleted removes it;
     /// and Created replay is idempotent (a re-seen create is a no-op, not a dup error).
+    /// The additive `unassign` flag actually clears the assignee on EVENT
+    /// replay (the torn-checkpoint path a rebuilt-from-parquet acceptance test
+    /// cannot reach) — and its absence leaves the assignee untouched, so every
+    /// pre-existing committed log replays byte-identically.
+    #[test]
+    fn moved_replay_honors_the_unassign_flag_both_ways() {
+        use arrow_kanban::crud::KanbanStore;
+        use arrow_kanban::relations::RelationsStore;
+        let mut store = KanbanStore::new();
+        let mut rels = RelationsStore::new();
+        created_ev()
+            .replay_into(&mut store, &mut rels)
+            .expect("create");
+
+        let claim = |unassign: bool| {
+            MutationEvent::Moved(MovedEvent {
+                id: "CH-9".into(),
+                from: "backlog".into(),
+                to: if unassign {
+                    "backlog".into()
+                } else {
+                    "in_progress".into()
+                },
+                assignee: if unassign { None } else { Some("DGX1".into()) },
+                force: false,
+                reason: None,
+                resolution: None,
+                closed_by: None,
+                unassign,
+            })
+        };
+
+        claim(false)
+            .replay_into(&mut store, &mut rels)
+            .expect("claim replay");
+        let (_, holder) = store.status_and_assignee("CH-9").expect("read");
+        assert_eq!(
+            holder.as_deref(),
+            Some("DGX1"),
+            "claim replay sets the assignee"
+        );
+
+        claim(true)
+            .replay_into(&mut store, &mut rels)
+            .expect("bounce replay");
+        let (status, holder) = store.status_and_assignee("CH-9").expect("read");
+        assert_eq!(status, "backlog");
+        assert!(
+            holder.as_deref().unwrap_or("").is_empty(),
+            "unassign=true on replay must CLEAR the assignee (else a rebuilt              store resurrects the bounced executor's claim): {holder:?}"
+        );
+    }
+
     #[test]
     fn replay_reconstructs_and_is_idempotent() {
         use arrow_kanban::crud::KanbanStore;
