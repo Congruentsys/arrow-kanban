@@ -127,6 +127,8 @@ pub enum KanbanCommand {
     // ── Core CRUD + analytics ──
     Create(CreateRequest),
     Move(MoveRequest),
+    Claim(crate::handlers::core::ClaimRequest),
+    Bounce(crate::handlers::core::BounceRequest),
     /// `requeue` — release a failed executor's claim, increment the item's
     /// `attempt_count`, dead-letter at the caller's cap (issue #40). One engine
     /// turn, so the whole transition is atomic under the single writer.
@@ -199,6 +201,8 @@ impl KanbanCommand {
         match self {
             C::Create(_) => "create",
             C::Move(_) => "move",
+            C::Claim(_) => "claim",
+            C::Bounce(_) => "bounce",
             C::Requeue(_) => "requeue",
             C::Ratify(_) => "ratify",
             C::Update(_) => "update",
@@ -278,6 +282,8 @@ impl KanbanCommand {
         match self {
             C::Create(_)
             | C::Move(_)
+            | C::Claim(_)
+            | C::Bounce(_)
             | C::Requeue(_)
             | C::Ratify(_)
             | C::Update(_)
@@ -426,6 +432,8 @@ fn parse_inner(verb: &str, payload: &[u8]) -> ParseOutcome {
     let cmd = match verb {
         "create" => C::Create(req!()),
         "move" => C::Move(req!()),
+        "claim" => C::Claim(req!()),
+        "bounce" => C::Bounce(req!()),
         "requeue" => C::Requeue(req!()),
         "ratify" => C::Ratify(req!()),
         "update" => C::Update(req!()),
@@ -877,6 +885,8 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
         match cmd {
             C::Create(req) => core::handle_create_typed(req, &mut self.store, &mut self.relations),
             C::Move(req) => core::handle_move_typed(req, &mut self.store),
+            C::Claim(req) => core::handle_claim_typed(req, &mut self.store),
+            C::Bounce(req) => core::handle_bounce_typed(req, &mut self.store),
             C::Requeue(req) => core::handle_requeue_typed(req, &mut self.store),
             C::Ratify(req) => core::handle_ratify_typed(req, &mut self.store),
             C::Update(req) => core::handle_update_typed(req, &mut self.store, &mut self.relations),

@@ -212,6 +212,12 @@ pub struct MovedEvent {
     pub reason: Option<String>,
     pub resolution: Option<String>,
     pub closed_by: Option<String>,
+    /// Additive (issue #76): the bounce verb clears the assignee, and replay
+    /// must reproduce that — `assignee: None` alone means "leave untouched" on
+    /// replay, which would resurrect the bounced executor's claim. Defaults
+    /// false so every pre-existing committed log replays byte-identically.
+    #[serde(default)]
+    pub unassign: bool,
 }
 
 /// Replay-complete record of a requeue (issue #40). Carries the RESULT — the
@@ -399,8 +405,41 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 reason: ostr(&q, "reason"),
                 resolution: ostr(&q, "resolution"),
                 closed_by: ostr(&q, "closed_by"),
+                unassign: false,
             }))
         }
+        // A claim IS a move (in_progress + assignee) at the event level — every
+        // replay/snapshot/outbox consumer sees the ordinary shape. The CAS and
+        // the bounce gate live in the handler; the event records the outcome.
+        C::Claim(req) => {
+            let q = serde_json::to_value(req).ok()?;
+            Some(MutationEvent::Moved(MovedEvent {
+                id: ostr(&rv, "id").or_else(|| ostr(&q, "id"))?,
+                from: ostr(&rv, "from").unwrap_or_default(),
+                to: "in_progress".to_string(),
+                assignee: ostr(&q, "agent"),
+                force: false,
+                reason: Some("claimed (atomic claim verb)".to_string()),
+                resolution: None,
+                closed_by: None,
+                unassign: false,
+            }))
+        }
+        // A bounce is a move to backlog whose REASON is the structured stamp
+        // (from the REPLY — the handler computed the body hash) and which
+        // CLEARS the assignee. Both must ride the event or a replayed store
+        // would lose the unrepaired-bounce gate and resurrect the claim.
+        C::Bounce(_) => Some(MutationEvent::Moved(MovedEvent {
+            id: ostr(&rv, "id")?,
+            from: ostr(&rv, "from").unwrap_or_default(),
+            to: "backlog".to_string(),
+            assignee: None,
+            force: false,
+            reason: ostr(&rv, "stamp"),
+            resolution: None,
+            closed_by: None,
+            unassign: true,
+        })),
         C::Requeue(req) => {
             // Result fields come from the REPLY (the store's adjudication —
             // attempts, landed status, dead-letter verdict); provenance comes
@@ -740,6 +779,9 @@ impl MutationEvent {
                     .map_err(|err| format!("replay move {}: {err}", e.id))?;
                 if let Some(a) = e.assignee.as_deref() {
                     let _ = store.update_assignee(&e.id, Some(a));
+                }
+                if e.unassign {
+                    let _ = store.update_assignee(&e.id, None);
                 }
                 if let Some(r) = e.resolution.as_deref() {
                     let _ = store.update_resolution(&e.id, Some(r));

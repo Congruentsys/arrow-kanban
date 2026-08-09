@@ -6,7 +6,7 @@
 
 use crate::id_alloc;
 use crate::item_type::ItemType;
-use crate::schema::{comments_schema, items_col, items_schema, runs_schema};
+use crate::schema::{comments_schema, items_col, items_schema, runs_col, runs_schema};
 use arrow::array::{
     Array, BooleanArray, Int32Array, ListArray, ListBuilder, RecordBatch, StringArray,
     StringBuilder, TimestampMillisecondArray,
@@ -400,6 +400,56 @@ impl KanbanStore {
     }
 
     /// Read an item's current `(status, assignee)` — `assignee` is `None` when unset.
+    /// The item's current `body_hash` column value (None when no body).
+    pub fn body_hash_of(&self, id: &str) -> Result<Option<String>> {
+        let item = self.get_item(id)?;
+        let hashes = item
+            .column(items_col::BODY_HASH)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("body_hash column");
+        Ok(if hashes.is_null(0) {
+            None
+        } else {
+            Some(hashes.value(0).to_string())
+        })
+    }
+
+    /// The reason recorded on the item's LATEST run that landed on `to_status`
+    /// (run rows are appended in order, so the last match is the newest). The
+    /// bounce verb writes a structured JSON reason here and the claim verb
+    /// reads it back — the server parsing its OWN format, never foreign prose.
+    pub fn latest_run_reason_landing(&self, id: &str, to_status: &str) -> Option<String> {
+        let mut latest: Option<String> = None;
+        for batch in &self.runs_batches {
+            let ids = batch
+                .column(runs_col::ITEM_ID)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("runs item_id column");
+            let tos = batch
+                .column(runs_col::TO_STATUS)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("runs to_status column");
+            let reasons = batch
+                .column(runs_col::REASON)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("runs reason column");
+            for i in 0..batch.num_rows() {
+                if ids.value(i) == id && tos.value(i) == to_status {
+                    latest = if reasons.is_null(i) {
+                        None
+                    } else {
+                        Some(reasons.value(i).to_string())
+                    };
+                }
+            }
+        }
+        latest
+    }
+
     pub fn status_and_assignee(&self, id: &str) -> Result<(String, Option<String>)> {
         let item = self.get_item(id)?; // 1-row batch
         let status = item
