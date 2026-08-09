@@ -681,6 +681,15 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
     /// core verb.
     pub fn dispatch(&mut self, subject: &str, payload: &[u8]) -> Vec<u8> {
         let verb = subject.strip_prefix("kanban.cmd.").unwrap_or(subject);
+        // Vocabulary hot-reload is PROCESS-level state, not store state: it
+        // commits nothing, appends no event, and touches no parquet — so it is
+        // handled before the typed parse, outside the health gate and the
+        // writer-lease fence (both of which guard DURABLE writes this verb
+        // never performs). The reload itself is fail-closed in the vocabulary
+        // module: any refusal leaves the running set untouched.
+        if verb == "admin_reload_vocab" {
+            return crate::handlers::admin_reload_vocab(payload);
+        }
         let reply = match parse_inner(verb, payload) {
             ParseOutcome::Cmd(cmd) => self.apply(cmd),
             ParseOutcome::BadPayload(reply) => reply,
