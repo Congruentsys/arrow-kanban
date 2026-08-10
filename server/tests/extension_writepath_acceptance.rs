@@ -520,7 +520,10 @@ fn extension_event_round_trips_without_a_tag_collision() {
 
     // A legacy variant's tag is unaffected by the new arm.
     let created = serde_json::to_value(MutationEvent::Deleted(
-        arrow_kanban_server::events::DeletedEvent { id: "CH-1".into() },
+        arrow_kanban_server::events::DeletedEvent {
+            id: "CH-1".into(),
+            agent: None,
+        },
     ))
     .expect("encode deleted");
     assert_eq!(created["kind"], "Deleted");

@@ -224,6 +224,7 @@ fn relation_add_replay_is_idempotent_where_raw_add_is_not() {
         source: "CH-1".into(),
         target: "CH-2".into(),
         predicate: "related".into(),
+        agent: None,
     });
     ev.replay_into(&mut store, &mut rels).expect("replay 1");
     ev.replay_into(&mut store, &mut rels)

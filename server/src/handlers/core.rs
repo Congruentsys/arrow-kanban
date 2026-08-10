@@ -25,6 +25,12 @@ pub struct CreateRequest {
     /// Typed relationships as `predicate:TARGET-ID`, applied at create time.
     #[serde(default)]
     relate: Vec<String>,
+    /// Who issued this command. Stamped into every request envelope by the
+    /// client, which is the only party that knows the caller's identity; the
+    /// server never resolves it locally (one process would stamp its own host
+    /// on every fleet mutation). `None` is honest — never fabricate an actor.
+    #[serde(default)]
+    actor: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -157,6 +163,12 @@ pub struct MoveRequest {
     reason: Option<String>,
     resolution: Option<String>,
     closed_by: Option<String>,
+    /// Who issued this command. Stamped into every request envelope by the
+    /// client, which is the only party that knows the caller's identity; the
+    /// server never resolves it locally (one process would stamp its own host
+    /// on every fleet mutation). `None` is honest — never fabricate an actor.
+    #[serde(default)]
+    actor: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -331,6 +343,8 @@ pub(crate) fn handle_claim_typed(
     handle_move_typed(
         MoveRequest {
             id: req.id,
+            // The claimant is the actor. Cloned because `assignee` below moves it.
+            actor: Some(req.agent.clone()),
             status: "in_progress".to_string(),
             assignee: Some(req.agent),
             force: false,
@@ -370,6 +384,9 @@ pub(crate) fn handle_bounce_typed(
     let moved = handle_move_typed(
         MoveRequest {
             id: req.id.clone(),
+            // The bouncer is the actor, even though the bounce CLEARS the assignee —
+            // exactly the case where "who performed it" and "who it is for" diverge.
+            actor: Some(req.agent.clone()),
             status: "backlog".to_string(),
             assignee: None,
             force: false,
@@ -486,6 +503,12 @@ pub(crate) fn handle_requeue_typed(
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RatifyRequest {
     phase_tag: String,
+    /// Who issued this command. Stamped into every request envelope by the
+    /// client, which is the only party that knows the caller's identity; the
+    /// server never resolves it locally (one process would stamp its own host
+    /// on every fleet mutation). `None` is honest — never fabricate an actor.
+    #[serde(default)]
+    actor: Option<String>,
 }
 
 /// First-class phase ratification: strip `pending-ratification` from every item carrying the phase
@@ -534,6 +557,12 @@ pub struct UpdateRequest {
     /// REMOVE typed edges (`predicate:TARGET`).
     #[serde(default)]
     unrelate: Vec<String>,
+    /// Who issued this command. Stamped into every request envelope by the
+    /// client, which is the only party that knows the caller's identity; the
+    /// server never resolves it locally (one process would stamp its own host
+    /// on every fleet mutation). `None` is honest — never fabricate an actor.
+    #[serde(default)]
+    actor: Option<String>,
 }
 
 /// The flat column a `related` / `dependsOn` predicate projects to. Only those
@@ -771,6 +800,12 @@ pub struct RankRequest {
     id: String,
     /// Manual rank. `Some(n)` sets it (lower = higher priority); `None` clears it.
     rank: Option<i32>,
+    /// Who issued this command. Stamped into every request envelope by the
+    /// client, which is the only party that knows the caller's identity; the
+    /// server never resolves it locally (one process would stamp its own host
+    /// on every fleet mutation). `None` is honest — never fabricate an actor.
+    #[serde(default)]
+    actor: Option<String>,
 }
 
 pub(crate) fn handle_rank_typed(
@@ -1136,6 +1171,12 @@ pub(crate) fn handle_stats_typed(
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DeleteRequest {
     id: String,
+    /// Who issued this command. Stamped into every request envelope by the
+    /// client, which is the only party that knows the caller's identity; the
+    /// server never resolves it locally (one process would stamp its own host
+    /// on every fleet mutation). `None` is honest — never fabricate an actor.
+    #[serde(default)]
+    actor: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1721,6 +1762,9 @@ pub struct HddCreateRequest {
     hypothesis: Option<String>,
     /// Experiment ID to link a measure to (optional, e.g. EXPR-130.1).
     experiment: Option<String>,
+    /// Who issued this command (request envelope, client-stamped).
+    #[serde(default)]
+    actor: Option<String>,
 }
 
 pub(crate) fn handle_hdd_create_typed(

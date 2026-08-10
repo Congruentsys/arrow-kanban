@@ -199,6 +199,10 @@ pub struct CreatedEvent {
     pub body: Option<String>,
     /// Typed edges recorded at create time, as `predicate:TARGET`.
     pub relationships: Vec<String>,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a status move.
@@ -212,6 +216,10 @@ pub struct MovedEvent {
     pub reason: Option<String>,
     pub resolution: Option<String>,
     pub closed_by: Option<String>,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
     /// Additive (issue #76): the bounce verb clears the assignee, and replay
     /// must reproduce that — `assignee: None` alone means "leave untouched" on
     /// replay, which would resurrect the bounced executor's claim. Defaults
@@ -243,6 +251,10 @@ pub struct RequeuedEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeletedEvent {
     pub id: String,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a phase ratification.
@@ -252,6 +264,10 @@ pub struct RatifiedEvent {
     pub stripped: Vec<String>,
     pub voyages_started: Vec<String>,
     pub remaining_pending: u64,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a field/relationship update.
@@ -271,6 +287,10 @@ pub struct UpdatedEvent {
     pub updated: Vec<String>,
     pub relationships_added: Vec<String>,
     pub relationships_removed: Vec<String>,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a comment.
@@ -286,6 +306,10 @@ pub struct CommentedEvent {
 pub struct RankedEvent {
     pub id: String,
     pub rank: Option<i32>,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a typed-relation add.
@@ -294,6 +318,10 @@ pub struct RelationAddedEvent {
     pub source: String,
     pub target: String,
     pub predicate: String,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Replay-complete record of a typed-relation REMOVE (the deletion
@@ -303,6 +331,10 @@ pub struct RelationRemovedEvent {
     pub source: String,
     pub target: String,
     pub predicate: String,
+    /// WHO performed this mutation, from the request envelope. Distinct from any
+    /// `assignee`/`author` field, which says who the item is FOR. `None` when the
+    /// envelope carried no actor — an absent actor is honest; a placeholder is not.
+    pub agent: Option<String>,
 }
 
 /// Notification record of an experiment-run start/complete. The run store is
@@ -372,6 +404,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 depends_on: vstr(&q, "depends_on"),
                 body: ostr(&q, "body"),
                 relationships: vstr(&rv, "relationships"),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::HddCreate(item_type, req) => {
@@ -390,6 +423,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 depends_on: Vec::new(),
                 body: ostr(&q, "body"),
                 relationships: Vec::new(),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::Move(req) => {
@@ -405,6 +439,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 reason: ostr(&q, "reason"),
                 resolution: ostr(&q, "resolution"),
                 closed_by: ostr(&q, "closed_by"),
+                agent: ostr(&q, "actor"),
                 unassign: false,
             }))
         }
@@ -422,6 +457,13 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 reason: Some("claimed (atomic claim verb)".to_string()),
                 resolution: None,
                 closed_by: None,
+                // The claimant IS the actor here, so this reads the same field as
+                // `assignee` above — but they answer different questions and merely
+                // coincide for this verb: `assignee` is who the item is FOR, `agent`
+                // is who performed the mutation. Read separately so a future verb
+                // that claims on someone else's behalf does not silently attribute
+                // the act to its beneficiary.
+                agent: ostr(&q, "agent"),
                 unassign: false,
             }))
         }
@@ -429,7 +471,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
         // (from the REPLY — the handler computed the body hash) and which
         // CLEARS the assignee. Both must ride the event or a replayed store
         // would lose the unrepaired-bounce gate and resurrect the claim.
-        C::Bounce(_) => Some(MutationEvent::Moved(MovedEvent {
+        C::Bounce(req) => Some(MutationEvent::Moved(MovedEvent {
             id: ostr(&rv, "id")?,
             from: ostr(&rv, "from").unwrap_or_default(),
             to: "backlog".to_string(),
@@ -438,6 +480,13 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
             reason: ostr(&rv, "stamp"),
             resolution: None,
             closed_by: None,
+            // The bouncer is the actor. Taken from the REQUEST, not by re-parsing
+            // the stamp in the reply: the stamp is a JSON string INSIDE a string,
+            // and attribution must not depend on parsing our own prose back out.
+            // This is why the arm binds `req` where it previously discarded it.
+            agent: serde_json::to_value(req)
+                .ok()
+                .and_then(|q| ostr(&q, "agent")),
             unassign: true,
         })),
         C::Requeue(req) => {
@@ -462,6 +511,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
             let q = serde_json::to_value(req).ok()?;
             Some(MutationEvent::Deleted(DeletedEvent {
                 id: ostr(&rv, "id").or_else(|| ostr(&q, "id"))?,
+                agent: ostr(&q, "actor"),
             }))
         }
         C::Ratify(req) => {
@@ -474,6 +524,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                     .get("remaining_pending")
                     .and_then(|x| x.as_u64())
                     .unwrap_or(0),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::Update(req) => {
@@ -492,6 +543,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 updated: vstr(&rv, "updated"),
                 relationships_added: vstr(&rv, "relationships_added"),
                 relationships_removed: vstr(&rv, "relationships_removed"),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::Comment(req) => {
@@ -507,6 +559,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
             Some(MutationEvent::Ranked(RankedEvent {
                 id: ostr(&q, "id").or_else(|| ostr(&rv, "id"))?,
                 rank: q.get("rank").and_then(|x| x.as_i64()).map(|n| n as i32),
+                agent: ostr(&q, "actor"),
             }))
         }
         C::RelationAdd(req) => {
@@ -515,6 +568,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 source: ostr(&q, "source_id").or_else(|| ostr(&rv, "source"))?,
                 target: ostr(&q, "target_id").or_else(|| ostr(&rv, "target"))?,
                 predicate: ostr(&q, "predicate").or_else(|| ostr(&rv, "predicate"))?,
+                agent: ostr(&q, "actor"),
             }))
         }
         C::RelationRemove(req) => {
@@ -523,6 +577,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
                 source: ostr(&q, "source_id").or_else(|| ostr(&rv, "source"))?,
                 target: ostr(&q, "target_id").or_else(|| ostr(&rv, "target"))?,
                 predicate: ostr(&q, "predicate").or_else(|| ostr(&rv, "predicate"))?,
+                agent: ostr(&q, "actor"),
             }))
         }
         #[cfg(feature = "research")]
@@ -1094,6 +1149,7 @@ mod tests {
             depends_on: vec![],
             body: Some("b".into()),
             relationships: vec![],
+            agent: None,
         })
     }
 
@@ -1127,6 +1183,7 @@ mod tests {
             reason: None,
             resolution: None,
             closed_by: None,
+            agent: None,
             unassign: false,
         });
         assert_eq!(moved.subject_suffix(), "moved");
@@ -1142,7 +1199,10 @@ mod tests {
             .unwrap()
         );
 
-        let deleted = MutationEvent::Deleted(DeletedEvent { id: "CH-9".into() });
+        let deleted = MutationEvent::Deleted(DeletedEvent {
+            id: "CH-9".into(),
+            agent: None,
+        });
         assert_eq!(deleted.subject_suffix(), "deleted");
         assert_eq!(deleted.contract_version(), "1.0");
         assert_eq!(
@@ -1162,6 +1222,188 @@ mod tests {
         assert_eq!(commented.subject_suffix(), "commented");
         assert_eq!(commented.contract_version(), "1.1");
         assert_eq!(commented.outbox_payload()["comment"], "hi");
+    }
+
+    /// EVERY envelope-populated variant names its actor — one arm per site.
+    ///
+    /// The move arm alone is not enough: `agent` is read from the envelope at nine
+    /// sites, and a single-path test leaves eight of them free to be dropped by a
+    /// refactor without anything going red. The events would keep flowing, just
+    /// anonymously, which is the silent direction.
+    ///
+    /// Asserted through the serialized event so one table covers every variant
+    /// without per-variant destructuring — and so a variant that loses its field
+    /// entirely fails here too, not just one that stops populating it.
+    #[test]
+    fn every_envelope_populated_variant_names_its_actor() {
+        // (verb, request payload, reply value) — one per envelope-read site.
+        let cases: Vec<(&str, serde_json::Value, serde_json::Value)> = vec![
+            (
+                "create",
+                serde_json::json!({"title":"T","item_type":"chore","actor":"DGX2"}),
+                serde_json::json!({"id":"CH-9","title":"T","item_type":"chore"}),
+            ),
+            (
+                "hdd.paper",
+                serde_json::json!({"title":"P","actor":"DGX2"}),
+                serde_json::json!({"id":"PAPER-1","title":"P"}),
+            ),
+            (
+                "move",
+                serde_json::json!({"id":"CH-9","status":"in_progress","actor":"DGX2"}),
+                serde_json::json!({"id":"CH-9","from":"backlog","to":"in_progress"}),
+            ),
+            (
+                "delete",
+                serde_json::json!({"id":"CH-9","actor":"DGX2"}),
+                serde_json::json!({"id":"CH-9"}),
+            ),
+            (
+                "ratify",
+                serde_json::json!({"phase_tag":"p1","actor":"DGX2"}),
+                serde_json::json!({"phase_tag":"p1","stripped":[],"voyages_started":[],"remaining_pending":0}),
+            ),
+            (
+                "update",
+                serde_json::json!({"id":"CH-9","actor":"DGX2"}),
+                serde_json::json!({"id":"CH-9","updated":[]}),
+            ),
+            (
+                "rank",
+                serde_json::json!({"id":"CH-9","rank":3,"actor":"DGX2"}),
+                serde_json::json!({"id":"CH-9"}),
+            ),
+            (
+                "relation.add",
+                serde_json::json!({"source_id":"CH-9","target_id":"CH-8","predicate":"blocks","actor":"DGX2"}),
+                serde_json::json!({"source":"CH-9","target":"CH-8","predicate":"blocks"}),
+            ),
+            (
+                "relation.remove",
+                serde_json::json!({"source_id":"CH-9","target_id":"CH-8","predicate":"blocks","actor":"DGX2"}),
+                serde_json::json!({"source":"CH-9","target":"CH-8","predicate":"blocks"}),
+            ),
+            // ── claim/bounce: the acting agent rides the REQUEST, not the envelope ──
+            // These two verbs carry their own `agent` field (the CAS comparand), so
+            // they populate from it rather than from `actor`. Same property, second
+            // source — and they are in this table precisely because the source
+            // differs: a change that only ever read `actor` would leave both silently
+            // unattributed while the nine arms above stayed green.
+            (
+                "claim",
+                serde_json::json!({"id":"CH-9","agent":"DGX2"}),
+                serde_json::json!({"id":"CH-9","from":"backlog"}),
+            ),
+            (
+                "bounce",
+                serde_json::json!({"id":"CH-9","agent":"DGX2","reason":"body contradicts canon"}),
+                serde_json::json!({"id":"CH-9","from":"in_progress","stamp":"{\"bounce\":true}"}),
+            ),
+            // ── requeue/comment: also request-`agent`, and they were MISSING ──
+            // The census said 11 and the population is 13 — found in review (Air, PR #72)
+            // by mapping every `agent:` line in `mutation_event` to its variant rather
+            // than trusting the comment. Requeue turned out to be guarded elsewhere
+            // (issue40_requeued_derives_from_reply_and_replays_idempotently reds when it
+            // is severed) — a CENSUS error. Comment was guarded by nothing at all:
+            // severing it left the whole crate green.
+            //
+            // Both are included even though only one was uncovered, because this table is
+            // the population statement. "Asserted somewhere else" is not a reason to leave
+            // a site out of the census that a floor is about to certify as complete.
+            (
+                "requeue",
+                serde_json::json!({"id":"CH-9","agent":"DGX2","reason":"retry"}),
+                serde_json::json!({"id":"CH-9","attempts":2,"status":"queued","dead_lettered":false}),
+            ),
+            (
+                "comment",
+                serde_json::json!({"id":"CH-9","text":"note","agent":"DGX2"}),
+                serde_json::json!({"id":"CH-9"}),
+            ),
+        ];
+
+        // A floor: if the table ever stops covering the sites it claims to, that is
+        // the scanner being broken, not the code being clean.
+        // 9 envelope-`actor` sites + 4 request-`agent` sites (claim, bounce, requeue, comment).
+        assert_eq!(cases.len(), 13, "one arm per agent-populated site");
+
+        for (verb, payload, reply_value) in cases {
+            let cmd = crate::engine::parse(verb, payload.to_string().as_bytes())
+                .unwrap_or_else(|_| panic!("{verb} payload parses"));
+            let ev = mutation_event(&cmd, &KanbanReply::Value(reply_value))
+                .unwrap_or_else(|| panic!("{verb} derives a mutation event"));
+            let j = serde_json::to_value(&ev).expect("event serializes");
+            assert_eq!(
+                j.get("agent").and_then(|a| a.as_str()),
+                Some("DGX2"),
+                "{verb}: the emitted event must name the acting agent (got {j})"
+            );
+        }
+    }
+
+    /// An `--assign`-bearing move CARRIES the acting agent onto its event.
+    ///
+    /// Asserted POSITIVELY: the event's `agent` equals the envelope's actor. A
+    /// "the agent is not wrong" phrasing would pass vacuously the moment the field
+    /// stopped being populated at all.
+    ///
+    /// Driven through the real wire parse rather than by constructing the request
+    /// struct, so this also pins that `actor` survives deserialization — the field
+    /// rode the wire before this change and was silently dropped, which is exactly
+    /// the failure a struct-built fixture would hide.
+    #[test]
+    fn assign_bearing_move_event_names_the_acting_agent() {
+        let cmd = crate::engine::parse(
+            "move",
+            br#"{"id":"CH-9","status":"in_progress","assignee":"M5","actor":"DGX2"}"#,
+        )
+        .expect("move payload parses");
+        let reply = KanbanReply::Value(serde_json::json!({
+            "id": "CH-9", "from": "backlog", "to": "in_progress",
+        }));
+
+        let ev = mutation_event(&cmd, &reply).expect("move derives a mutation event");
+        let MutationEvent::Moved(ref e) = ev else {
+            panic!("expected Moved, got {ev:?}");
+        };
+
+        assert_eq!(
+            e.agent.as_deref(),
+            Some("DGX2"),
+            "the event must name WHO performed the move"
+        );
+        // The distinction this item exists for: `assignee` is who the item is FOR,
+        // `agent` is who acted. A change that populated `agent` from `assignee`
+        // would satisfy a laxer assertion while still never answering "who did this".
+        assert_eq!(e.assignee.as_deref(), Some("M5"));
+        assert_ne!(
+            e.agent, e.assignee,
+            "agent must not be sourced from assignee — they answer different questions"
+        );
+    }
+
+    /// No actor on the envelope means `None`, never a placeholder. An invented
+    /// actor looks like provenance, compares like provenance, and identifies nobody.
+    #[test]
+    fn an_absent_actor_stays_none_and_is_never_fabricated() {
+        let cmd = crate::engine::parse(
+            "move",
+            br#"{"id":"CH-9","status":"in_progress","assignee":"M5"}"#,
+        )
+        .expect("move payload parses");
+        let reply = KanbanReply::Value(serde_json::json!({
+            "id": "CH-9", "from": "backlog", "to": "in_progress",
+        }));
+
+        let ev = mutation_event(&cmd, &reply).expect("move derives a mutation event");
+        let MutationEvent::Moved(ref e) = ev else {
+            panic!("expected Moved, got {ev:?}");
+        };
+        assert_eq!(
+            e.agent, None,
+            "an absent actor is honest; a placeholder is not"
+        );
+        assert_eq!(e.assignee.as_deref(), Some("M5"), "assignee is unaffected");
     }
 
     /// The commit-log form round-trips (serialize → deserialize is identity), so
@@ -1205,6 +1447,9 @@ mod tests {
                 reason: None,
                 resolution: None,
                 closed_by: None,
+                // None is right here: this fixture exercises UNASSIGN replay, not
+                // attribution. A value would assert something the test does not read.
+                agent: None,
                 unassign,
             })
         };
@@ -1259,20 +1504,27 @@ mod tests {
             reason: None,
             resolution: None,
             closed_by: None,
+            agent: None,
             unassign: false,
         })
         .replay_into(&mut store, &mut rels)
         .expect("replay move");
 
-        MutationEvent::Deleted(DeletedEvent { id: "CH-9".into() })
-            .replay_into(&mut store, &mut rels)
-            .expect("replay delete");
+        MutationEvent::Deleted(DeletedEvent {
+            id: "CH-9".into(),
+            agent: None,
+        })
+        .replay_into(&mut store, &mut rels)
+        .expect("replay delete");
         assert!(store.get_item("CH-9").is_err(), "delete replay removed it");
 
         // Idempotent delete: replaying delete on a gone item is a no-op.
-        MutationEvent::Deleted(DeletedEvent { id: "CH-9".into() })
-            .replay_into(&mut store, &mut rels)
-            .expect("idempotent delete replay");
+        MutationEvent::Deleted(DeletedEvent {
+            id: "CH-9".into(),
+            agent: None,
+        })
+        .replay_into(&mut store, &mut rels)
+        .expect("idempotent delete replay");
     }
 
     /// Issue #40: the requeue event carries the RESULT (absolute attempts,
