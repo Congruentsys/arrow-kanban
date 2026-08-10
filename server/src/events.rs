@@ -1299,12 +1299,33 @@ mod tests {
                 serde_json::json!({"id":"CH-9","agent":"DGX2","reason":"body contradicts canon"}),
                 serde_json::json!({"id":"CH-9","from":"in_progress","stamp":"{\"bounce\":true}"}),
             ),
+            // ── requeue/comment: also request-`agent`, and they were MISSING ──
+            // The census said 11 and the population is 13 — found in review (Air, PR #72)
+            // by mapping every `agent:` line in `mutation_event` to its variant rather
+            // than trusting the comment. Requeue turned out to be guarded elsewhere
+            // (issue40_requeued_derives_from_reply_and_replays_idempotently reds when it
+            // is severed) — a CENSUS error. Comment was guarded by nothing at all:
+            // severing it left the whole crate green.
+            //
+            // Both are included even though only one was uncovered, because this table is
+            // the population statement. "Asserted somewhere else" is not a reason to leave
+            // a site out of the census that a floor is about to certify as complete.
+            (
+                "requeue",
+                serde_json::json!({"id":"CH-9","agent":"DGX2","reason":"retry"}),
+                serde_json::json!({"id":"CH-9","attempts":2,"status":"queued","dead_lettered":false}),
+            ),
+            (
+                "comment",
+                serde_json::json!({"id":"CH-9","text":"note","agent":"DGX2"}),
+                serde_json::json!({"id":"CH-9"}),
+            ),
         ];
 
         // A floor: if the table ever stops covering the sites it claims to, that is
         // the scanner being broken, not the code being clean.
-        // 9 envelope-`actor` sites + 2 request-`agent` sites (claim, bounce).
-        assert_eq!(cases.len(), 11, "one arm per agent-populated site");
+        // 9 envelope-`actor` sites + 4 request-`agent` sites (claim, bounce, requeue, comment).
+        assert_eq!(cases.len(), 13, "one arm per agent-populated site");
 
         for (verb, payload, reply_value) in cases {
             let cmd = crate::engine::parse(verb, payload.to_string().as_bytes())
