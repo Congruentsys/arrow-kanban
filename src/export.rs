@@ -243,6 +243,17 @@ pub fn export_json(batches: &[RecordBatch]) -> String {
             .as_any()
             .downcast_ref::<Int32Array>()
             .expect("priority_rank");
+        // The requeue counter (issue #40). Column-guarded: a batch loaded from
+        // pre-migration Parquet may predate it; present-but-null in that case,
+        // never omitted (absent is indistinguishable from unset).
+        let attempts_col = if batch.num_columns() > items_col::ATTEMPT_COUNT {
+            batch
+                .column(items_col::ATTEMPT_COUNT)
+                .as_any()
+                .downcast_ref::<Int32Array>()
+        } else {
+            None
+        };
 
         for i in 0..batch.num_rows() {
             if deleted.value(i) {
@@ -272,18 +283,24 @@ pub fn export_json(batches: &[RecordBatch]) -> String {
                 rank_col.value(i).to_string()
             };
 
+            let attempts_json = match attempts_col {
+                Some(col) if !col.is_null(i) => col.value(i).to_string(),
+                _ => "null".to_string(),
+            };
+
             // `resolution`/`closed_by` were absent from this projection
             // entirely, so a closure audit reading the JSON saw None for every item —
             // including resolved ones — and an absent field is indistinguishable from an
             // unset one. Null-safe like `assignee`: null when unset, never omitted.
             items.push(format!(
-                r#"  {{"id":"{}","title":"{}","type":"{}","status":"{}","priority":{},"rank":{},"assignee":{},"resolution":{},"closed_by":{},"tags":[{}],"related":[{}],"depends_on":[{}],"body":{}}}"#,
+                r#"  {{"id":"{}","title":"{}","type":"{}","status":"{}","priority":{},"rank":{},"attempts":{},"assignee":{},"resolution":{},"closed_by":{},"tags":[{}],"related":[{}],"depends_on":[{}],"body":{}}}"#,
                 escape_json(ids.value(i)),
                 escape_json(titles.value(i)),
                 escape_json(types.value(i)),
                 escape_json(statuses.value(i)),
                 if priorities.is_null(i) { "null".to_string() } else { format!("\"{}\"", escape_json(priorities.value(i))) },
                 rank_json,
+                attempts_json,
                 if assignees.is_null(i) { "null".to_string() } else { format!("\"{}\"", escape_json(assignees.value(i))) },
                 if resolutions.is_null(i) { "null".to_string() } else { format!("\"{}\"", escape_json(resolutions.value(i))) },
                 if closed_bys.is_null(i) { "null".to_string() } else { format!("\"{}\"", escape_json(closed_bys.value(i))) },
@@ -1536,6 +1553,31 @@ mod tests {
         assert!(
             json.contains("\"closed_by\":\"PROP-9999\""),
             "closed_by must appear in the JSON projection"
+        );
+    }
+
+    /// The requeue counter (issue #40) had no read surface at all: `attempts`
+    /// was ABSENT from the JSON projection, so an operator could not ask how
+    /// many attempts an item had burned before deciding whether to intervene.
+    /// Same posture as `resolution`/`closed_by` above: present-but-zero for a
+    /// fresh item (absent is indistinguishable from unset), and the real count
+    /// once the breaker has written one.
+    #[test]
+    fn test_export_json_carries_attempts() {
+        let mut store = create_test_store();
+        let batches = store.query_items(None, None, Some("development"), None);
+        let json = export_json(&batches);
+        assert!(
+            json.contains("\"attempts\":0"),
+            "a fresh item must carry an explicit attempts:0, got: {json}"
+        );
+
+        store.set_attempt_count("EX-1300", 2).unwrap();
+        let batches = store.query_items(None, None, Some("development"), None);
+        let json = export_json(&batches);
+        assert!(
+            json.contains("\"attempts\":2"),
+            "a counted item's attempts must appear in the JSON projection, got: {json}"
         );
     }
 
