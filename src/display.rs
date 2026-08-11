@@ -3,7 +3,7 @@
 
 use crate::schema::items_col;
 use arrow::array::{
-    Array, BooleanArray, ListArray, RecordBatch, StringArray, TimestampMillisecondArray,
+    Array, BooleanArray, Int32Array, ListArray, RecordBatch, StringArray, TimestampMillisecondArray,
 };
 
 /// Format a list of item batches as a table.
@@ -176,6 +176,22 @@ pub fn format_item_detail(batch: &RecordBatch) -> String {
     let closed_bys = col_str(batch, items_col::CLOSED_BY);
     if !closed_bys.is_null(0) {
         lines.push(format!("  Closed by  {}", closed_bys.value(0)));
+    }
+
+    // Attempts: the requeue counter (issue #40). Rendered only once the breaker
+    // has counted something — zero is the universal healthy case, and a line on
+    // every item would teach readers to skip the one place it matters. Guarded
+    // on column presence: a batch loaded from pre-migration Parquet may predate
+    // the column.
+    if batch.num_columns() > items_col::ATTEMPT_COUNT
+        && let Some(attempts) = batch
+            .column(items_col::ATTEMPT_COUNT)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+        && !attempts.is_null(0)
+        && attempts.value(0) > 0
+    {
+        lines.push(format!("  Attempts   {}", attempts.value(0)));
     }
 
     // Show updated_at if present
@@ -528,6 +544,31 @@ mod tests {
     fn test_format_empty_table() {
         let output = format_item_table(&[]);
         assert!(output.contains("No items found"));
+    }
+
+    // The requeue counter (issue #40) is written by the store's own atomic turn,
+    // but before this render an operator had NO read surface for it — the only
+    // way to learn how many attempts an item had burned was to trigger another
+    // requeue and read the reply. Silence at zero is deliberate: 0 is the
+    // universal healthy case, and a line printed on every item is noise that
+    // teaches readers to skip the one place it matters.
+    #[test]
+    fn attempt_count_renders_on_detail_once_nonzero() {
+        let mut store = make_store();
+        let item = store.get_item("EX-1300").expect("get item");
+        assert!(
+            !format_item_detail(&item).contains("Attempts"),
+            "a zero-attempt item must NOT print an Attempts line"
+        );
+        store
+            .set_attempt_count("EX-1300", 2)
+            .expect("set attempt count");
+        let item = store.get_item("EX-1300").expect("get item");
+        let output = format_item_detail(&item);
+        assert!(
+            output.contains("Attempts   2"),
+            "a counted item must render its attempt count, got:\n{output}"
+        );
     }
 
     #[test]
