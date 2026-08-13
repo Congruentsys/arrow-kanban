@@ -16,6 +16,15 @@ pub enum StateError {
         board: String,
     },
 
+    #[error(
+        "Invalid transition: '{from}' → '{to}' is not in the lifecycle model. Legal from '{from}': {targets}"
+    )]
+    IllegalPerModel {
+        from: String,
+        to: String,
+        targets: String,
+    },
+
     #[error("Invalid state '{state}' for board '{board}'")]
     InvalidState { state: String, board: String },
 
@@ -58,6 +67,33 @@ pub fn validate_transition_for_type(
     to: &str,
     item_type: Option<&str>,
 ) -> Result<()> {
+    // The EXPLICIT, data-driven transition graph (ontology/kanban.ttl via
+    // crate::state_model) is consulted FIRST for the development board's DEFAULT
+    // lifecycle. It is the one mechanism, now fed by data:
+    //   Legal        -> Ok, even if the deployment's config.yaml states list lags the
+    //                   model (planning/ready become usable the moment the binary
+    //                   carries them — config is presentation, the model is law);
+    //   Illegal      -> refused NAMING the legal targets (the --relate refusal shape);
+    //   UnknownState -> fall through to the positional rule below unchanged — a custom
+    //                   config state the model does not know keeps today's semantics,
+    //                   and per-type research lifecycles (type_states) never enter the
+    //                   graph path at all.
+    let uses_type_override = item_type.is_some_and(|t| board.type_states.contains_key(t));
+    if board.name == "development" && !uses_type_override {
+        use crate::state_model::{TransitionVerdict, is_legal_transition};
+        match is_legal_transition(from, to) {
+            TransitionVerdict::Legal => return Ok(()),
+            TransitionVerdict::Illegal { legal_targets } => {
+                return Err(StateError::IllegalPerModel {
+                    from: from.to_string(),
+                    to: to.to_string(),
+                    targets: legal_targets.join(", "),
+                });
+            }
+            TransitionVerdict::UnknownState => {}
+        }
+    }
+
     let states = match item_type {
         Some(t) => board.states_for_type(t),
         None => &board.states,
@@ -315,9 +351,29 @@ mod tests {
     #[test]
     fn test_invalid_backward_transition() {
         let board = dev_board();
-        assert!(validate_transition(&board, "done", "backlog").is_err());
-        assert!(validate_transition(&board, "review", "in_progress").is_err());
-        assert!(validate_transition(&board, "in_progress", "backlog").is_err());
+        // DELIBERATE INVARIANT CHANGE, stated: the positional forward-only rule
+        // refused three moves that are measured live practice, and the fleet server never
+        // enforced the refusal (zero call sites in the composition), so the rule
+        // contradicted reality without protecting anything:
+        //   done -> backlog        reopen (a done signal reopened during a cord clear)
+        //   review -> in_progress  rework after request-changes
+        //   in_progress -> backlog the bounce (workit-bounce.sh's revert)
+        // The explicit model legalizes those and refuses what nothing legitimate does:
+        assert!(validate_transition(&board, "done", "backlog").is_ok());
+        assert!(validate_transition(&board, "review", "in_progress").is_ok());
+        assert!(validate_transition(&board, "in_progress", "backlog").is_ok());
+        // Still illegal per the model, and the refusal NAMES the legal targets:
+        match validate_transition(&board, "planning", "in_progress") {
+            Err(StateError::IllegalPerModel { targets, .. }) => {
+                assert!(
+                    targets.contains("ready"),
+                    "refusal must name 'ready': {targets}"
+                );
+            }
+            other => panic!("planning->in_progress must be IllegalPerModel, got {other:?}"),
+        }
+        assert!(validate_transition(&board, "backlog", "review").is_err());
+        assert!(validate_transition(&board, "ready", "backlog").is_err());
     }
 
     #[test]

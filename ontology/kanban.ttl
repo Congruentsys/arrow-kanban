@@ -439,3 +439,90 @@ kb:measures a owl:ObjectProperty ;
     rdfs:range kb:Experiment , kb:Hypothesis ;
     rdfs:label "measures" ;
     rdfs:comment "a measure tracks the outcome of an experiment (or, per current practice, a hypothesis)" .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LIFECYCLE STATES + TRANSITIONS (project-directed, 2026-08-13)
+#
+# The development board's states were a flat LIST (any state could follow any
+# state) and the missing planning axis was simulated by tags the ready-frontier
+# query had to subtract one by one. This section makes the lifecycle DATA, in
+# the same file and under the same fail-closed loader discipline as the
+# relationship vocabulary above.
+#
+# ⚠ DELIBERATELY NOT owl:Class / owl:ObjectProperty. Those two declaration
+# shapes feed the EDGE-vocabulary parsers (predicates() / classes()): typing a
+# state as owl:Class would admit it as a relate-target entity class, and typing
+# kb:transitionsTo as owl:ObjectProperty would make it a `--relate` predicate.
+# A lifecycle state is neither, so it gets its own typing and its own parser.
+#
+# THE ADOPTED STATE SET (the decision this section records):
+#   backlog     raw intake — filed, not yet defined. Kept as-is: an idea's
+#               landing place; distinct from being buildable.
+#   planning    NEW (the mandated minimum): the item's contract is
+#               being written/repaired. INVISIBLE to the executor frontier —
+#               work cannot be claimed out of planning, which is the structural
+#               fix for "an agent picks up a ticket and it is not fully
+#               planned". A bounce's proper landing place; the consuming
+#               deployment's "not yet released" tag is this state wearing a
+#               tag (folding it is that deployment's follow-up).
+#   ready       NEW: fully planned and claimable — what `backlog` used to
+#               pretend to be. planning -> ready is the release/ratification
+#               act. Adopted because without it the intake pile and the
+#               claimable frontier stay conflated (the measured bounce cost:
+#               six independent investigations of one void premise).
+#   in_progress / review / done — unchanged.
+#   approved    CONSIDERED AND NOT ADOPTED (recorded, not silent): approval is
+#               already first-class on the PROPOSAL object (proposal approve). A
+#               second approved state on the ITEM would store one fact in two
+#               places — the drift class this repo exists to end.
+#
+# TRANSITION LEGALITY. Strict where nothing legitimate exists, permissive where
+# live practice requires (a model that refuses the fleet's real moves on day
+# one gets bypassed, which is worse than no model):
+#   * planning -> in_progress is REFUSED — the one transition whose absence IS
+#     the feature: unplanned work cannot be claimed.
+#   * backlog -> in_progress stays LEGAL during migration — every pre-model
+#     item claims that way today; refusing it would halt the fleet, and the
+#     planning discipline arrives item-by-item as planners adopt the state.
+#   * review -> {in_progress, backlog, planning} — rework, un-park,
+#     and re-plan respectively. done -> {backlog, in_progress} — reopen paths
+#     (measured live: a closed item reopened during a stop-cord clear).
+#   * done is reachable from every non-terminal state: records close from
+#     backlog (the RECORD-signal rule), abandons close from planning/ready
+#     (wont_do/obsolete resolutions).
+
+kb:backlog a kb:LifecycleState ;
+    kb:board "development" ;
+    rdfs:label "backlog" ;
+    kb:transitionsTo kb:planning , kb:ready , kb:in_progress , kb:done ;
+    rdfs:comment "raw intake — filed, not yet defined (backlog->in_progress stays legal for migration)" .
+
+kb:planning a kb:LifecycleState ;
+    kb:board "development" ;
+    rdfs:label "planning" ;
+    kb:transitionsTo kb:ready , kb:backlog , kb:done ;
+    rdfs:comment "the contract is being written or repaired; NOT claimable — planning->in_progress is deliberately absent" .
+
+kb:ready a kb:LifecycleState ;
+    kb:board "development" ;
+    rdfs:label "ready" ;
+    kb:transitionsTo kb:in_progress , kb:planning , kb:done ;
+    rdfs:comment "fully planned and claimable; planning->ready is the release act" .
+
+kb:in_progress a kb:LifecycleState ;
+    kb:board "development" ;
+    rdfs:label "in_progress" ;
+    kb:transitionsTo kb:review , kb:backlog , kb:planning , kb:done ;
+    rdfs:comment "claimed and being built; ->backlog is the legacy bounce target, ->planning the re-plan-aware one" .
+
+kb:review a kb:LifecycleState ;
+    kb:board "development" ;
+    rdfs:label "review" ;
+    kb:transitionsTo kb:done , kb:in_progress , kb:backlog , kb:planning ;
+    rdfs:comment "a proposal is under cross-agent review; ->backlog un-parks remaining scope" .
+
+kb:done a kb:LifecycleState ;
+    kb:board "development" ;
+    rdfs:label "done" ;
+    kb:transitionsTo kb:backlog , kb:in_progress ;
+    rdfs:comment "terminal (with resolution); reopen paths kept — a close taken back is a real move, measured" .
