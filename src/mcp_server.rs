@@ -322,24 +322,10 @@ impl McpServer {
 
 // ─── Validation ────────────────────────────────────────────────────────────
 
-const VALID_STATUSES: &[&str] = &[
-    "backlog",
-    "in_progress",
-    "review",
-    "done",
-    "blocked",
-    "draft",
-    "active",
-    "retired",
-    "complete",
-    "abandoned",
-    "planned",
-    "running",
-    "outline",
-    "writing",
-    "captured",
-    "formalized",
-];
+/// ONE source for the lifecycle status set, shared with the CLI's `--status` refusal.
+/// Two copies of this list would drift, and a drifted copy fails silently in the
+/// direction that matters: a status valid in one place and rejected in the other.
+use crate::state_machine::VALID_STATUSES;
 
 const VALID_ITEM_TYPES: &[&str] = &[
     "expedition",
