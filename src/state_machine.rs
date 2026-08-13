@@ -263,6 +263,12 @@ pub const VALID_STATUSES: &[&str] = &[
     "writing",
     "captured",
     "formalized",
+    // From the lifecycle model (PR #87): the planning-funnel states. Without these a
+    // `--status planning` filter is refused while `move X planning` is accepted — the
+    // filter and the state machine disagreeing about what a state is. The coherence
+    // test below pins the whole set against the LOADED model so this cannot drift again.
+    "planning",
+    "ready",
 ];
 
 /// Refuse a `--status` filter value that no lifecycle can produce, naming the valid set.
@@ -292,6 +298,24 @@ pub fn validate_status_filter(status: &str) -> std::result::Result<(), String> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    /// PR #88: the filter const and the LOADED lifecycle model must agree. PR #87 added
+    /// planning/ready to the model while this const predated them, so `--status planning`
+    /// was refused while `move X planning` was accepted. A const cannot read runtime data,
+    /// so the coherence is pinned here instead: every state the model loads (data or
+    /// fallback) is a valid filter value. Goes RED the next time a state is added to the
+    /// ontology without joining VALID_STATUSES.
+    #[test]
+    fn every_model_state_is_a_valid_status_filter() {
+        for state in crate::state_model::states() {
+            assert!(
+                VALID_STATUSES.contains(&state.name),
+                "state '{}' is in the lifecycle model but missing from VALID_STATUSES — \
+                 the --status filter would refuse a state the state machine accepts",
+                state.name
+            );
+        }
+    }
 
     fn dev_board() -> BoardConfig {
         BoardConfig {
