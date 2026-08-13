@@ -203,6 +203,55 @@ pub fn is_terminal_state(status: &str) -> bool {
     TERMINAL_STATES.contains(&status)
 }
 
+/// Every status any configured lifecycle can produce, across both boards and every
+/// per-type override.
+///
+/// This is the UNION rather than a per-board set, and that is deliberate: a `--status`
+/// filter is refused only when the value can match *nothing anywhere*. Narrowing the
+/// refusal per board would reject values that are legitimate on the other one, and a
+/// refusal that rejects a legitimate query is a worse bug than the one being fixed.
+pub const VALID_STATUSES: &[&str] = &[
+    "backlog",
+    "in_progress",
+    "review",
+    "done",
+    "blocked",
+    "draft",
+    "active",
+    "retired",
+    "complete",
+    "abandoned",
+    "planned",
+    "running",
+    "outline",
+    "writing",
+    "captured",
+    "formalized",
+];
+
+/// Refuse a `--status` filter value that no lifecycle can produce, naming the valid set.
+///
+/// Without this, a filter that CANNOT match and a filter that legitimately matched
+/// nothing are byte-identical: both print `No items found.` and exit 0. That silence is
+/// what let a one-character typo (`in-progress` for `in_progress`) sit undetected in a
+/// caller whose empty result was its only safety input — every record read as unclaimed.
+/// A refusal would have failed that script loudly the first time it ran.
+///
+/// Mirrors the unknown-`--board` refusal: name the offending value, then the valid set.
+///
+/// A VALID status that simply has no matches is NOT an error — it still returns its empty
+/// result normally. Both directions matter; a refusal that also rejects legitimate empties
+/// would be a regression, not a fix.
+pub fn validate_status_filter(status: &str) -> std::result::Result<(), String> {
+    if VALID_STATUSES.contains(&status) {
+        return Ok(());
+    }
+    Err(format!(
+        "unknown --status '{status}' — valid statuses: {}",
+        VALID_STATUSES.join(", ")
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

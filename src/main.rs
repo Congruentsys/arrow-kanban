@@ -824,8 +824,33 @@ fn run_materialize_item_command(
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// The `--status` filter value, for every command that takes one.
+///
+/// Enumerated rather than matched loosely so a NEW command carrying a `--status` filter
+/// has to be added here deliberately. Note these are the ITEM lifecycle statuses; a verb
+/// with a different status vocabulary must not be added to this list.
+fn status_filter_of(command: &Commands) -> Option<&str> {
+    match command {
+        Commands::List { status, .. }
+        | Commands::Validate { status, .. }
+        | Commands::Export { status, .. } => status.as_deref(),
+        _ => None,
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
+
+    // Refuse a `--status` value no lifecycle can produce, BEFORE any dispatch — so the
+    // refusal is identical in local and server mode and costs no round trip. An
+    // unmatchable filter and a legitimately empty one must not look the same.
+    if let Some(status) = status_filter_of(&cli.command)
+        && let Err(e) = state_machine::validate_status_filter(status)
+    {
+        eprintln!("{e}");
+        process::exit(2);
+    }
+
     let root = cli.root.canonicalize().unwrap_or(cli.root);
 
     // MCP server runs locally — intercept before NATS client dispatch
