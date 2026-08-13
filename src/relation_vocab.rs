@@ -406,7 +406,7 @@ pub fn reload_embedded() -> Result<VocabReload, String> {
 
 /// Reassemble logical Turtle statements from physical lines (shared by the
 /// predicate and class parsers — one reading of the file format, not two).
-fn logical_statements(ttl: &str) -> Result<Vec<String>, String> {
+pub(crate) fn logical_statements(ttl: &str) -> Result<Vec<String>, String> {
     let mut statements = Vec::new();
     let mut current = String::new();
     for raw in ttl.lines() {
@@ -536,7 +536,7 @@ fn leak_strs(v: Vec<&'static str>) -> &'static [&'static str] {
 }
 
 /// Extract the local name from a `kb:xxx` term.
-fn kb_local(term: &str) -> Result<&str, String> {
+pub(crate) fn kb_local(term: &str) -> Result<&str, String> {
     term.trim()
         .strip_prefix("kb:")
         .ok_or_else(|| format!("expected a kb: term, got '{term}'"))
@@ -562,7 +562,7 @@ fn class_list(rest: &str) -> Result<Vec<String>, String> {
 }
 
 /// Extract a quoted literal (`"..."`) from a clause remainder.
-fn quoted(rest: &str) -> Result<String, String> {
+pub(crate) fn quoted(rest: &str) -> Result<String, String> {
     let start = rest
         .find('"')
         .ok_or_else(|| format!("expected a quoted literal in '{rest}'"))?;
@@ -574,7 +574,7 @@ fn quoted(rest: &str) -> Result<String, String> {
 }
 
 /// Split on `sep`, but never inside a `"..."` literal (so a comment may contain `;`).
-fn split_outside_quotes(s: &str, sep: char) -> Vec<&str> {
+pub(crate) fn split_outside_quotes(s: &str, sep: char) -> Vec<&str> {
     let mut parts = Vec::new();
     let (mut start, mut in_quotes) = (0usize, false);
     for (i, c) in s.char_indices() {

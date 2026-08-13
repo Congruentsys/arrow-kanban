@@ -42,6 +42,7 @@ pub mod relation_vocab;
 pub mod relations;
 pub mod schema;
 pub mod state_machine;
+pub mod state_model;
 pub mod stats;
 pub mod templates;
 pub mod theme;
