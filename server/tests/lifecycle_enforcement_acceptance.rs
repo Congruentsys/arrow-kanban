@@ -59,7 +59,10 @@ fn engine_with(items: &[&str]) -> (tempfile::TempDir, KanbanEngine) {
 }
 
 fn mv(engine: &mut KanbanEngine, id: &str, to: &str) -> serde_json::Value {
-    json(&engine.dispatch("move", format!(r#"{{"id":"{id}","status":"{to}"}}"#).as_bytes()))
+    json(&engine.dispatch(
+        "move",
+        format!(r#"{{"id":"{id}","status":"{to}"}}"#).as_bytes(),
+    ))
 }
 
 #[test]
@@ -68,7 +71,10 @@ fn illegal_transition_is_refused_naming_the_legal_targets() {
 
     // backlog -> planning is in the model.
     let ok = mv(&mut engine, "CH-1", "planning");
-    assert!(ok.get("error").is_none(), "backlog -> planning is legal: {ok}");
+    assert!(
+        ok.get("error").is_none(),
+        "backlog -> planning is legal: {ok}"
+    );
 
     // planning -> in_progress is NOT (the funnel routes through `ready`).
     let refused = mv(&mut engine, "CH-1", "in_progress");
