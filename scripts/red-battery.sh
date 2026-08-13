@@ -151,6 +151,15 @@ mutate_expect_red "closed-crate/NuSy ref -> structural_core_only_acceptance.rs (
 mutate_expect_red "closed-crate/NuSy ref -> replica.rs (new read-side src)"                 server/src/replica.rs                     $'\n// pulls nusy-graph-review internals\n'
 mutate_expect_red "closed-crate/NuSy ref -> replica_gap_acceptance.rs (new PR-4 test)"      server/tests/replica_gap_acceptance.rs    $'\n// pulls nusy-graph-review internals\n'
 
+# docs/ — a NEWLY SCANNED surface, and the one where a leak is most likely, because narrative
+# prose is exactly where an author explains the reasoning behind upstream vocabulary and
+# internal refs. Before `docs` joined SCAN_DIRS both of these injections left the gate GREEN
+# while the leak sat in a shipped file: a clean exit having examined nothing, which is
+# indistinguishable from a pass. These two pin that the scan actually reaches the directory —
+# remove `docs` from SCAN_DIRS and they go green, which is the failure they exist to catch.
+mutate_expect_red "closed vocab -> docs (newly scanned prose surface)"      docs/MULTI-SESSION-OPERATING-MODEL.md $'\nThis came out of the NuSy fleet.\n'
+mutate_expect_red "PROSE tracker citation -> docs (newly scanned surface)"  docs/MULTI-SESSION-OPERATING-MODEL.md $'\nA leaked citation: see CH-8195 for the ruling.\n'
+
 # issue #47 — the SMUGGLE class: the literal string "export-gate" on the same line used to
 # CONTENT-exempt it from the scan, so a tracker ref (or closed vocab) rode past the gate by
 # mentioning the gate's own name. The exclusion is path-shaped now (scripts/ is simply not

@@ -270,6 +270,13 @@ Stated so you can tell what you still have to build:
   exists to keep it that way. Your vocabulary goes in an extension, not in the engine.
 - **No opinion about who may write.** `WriterLease` gives you fencing; the policy is yours.
 
+If you are building the policy half for a team of **concurrent autonomous agents**, the
+practices that fell out of running this engine that way are written up in
+**[The multi-session operating model](docs/MULTI-SESSION-OPERATING-MODEL.md)** — sessions vs
+machines, review independence, who may revise and merge, claim-before-you-build, and
+persist-before-clear. It is a practice guide, not engine behaviour, and each rule is stated
+with the failure it prevents so you can adapt rather than copy it.
+
 ## Known issues
 
 An honest list as of this release. None of these loses data; each has a workaround. Contributions
