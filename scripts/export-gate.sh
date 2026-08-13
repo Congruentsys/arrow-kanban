@@ -15,7 +15,11 @@ set -uo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" || exit 1
 
 fail() { echo "❌ [export-gate] $1" >&2; exit 1; }
-SCAN_DIRS="src tests ontology themes server/src server/tests"
+# `docs` is scanned for the same reason src is: prose ships. A narrative document is where
+# upstream vocabulary and internal tracker refs are MOST likely to survive, because the
+# author is explaining the reasoning behind them — and a gate that does not scan a shipped
+# path returns a clean exit having examined nothing, which reads identically to a pass.
+SCAN_DIRS="src tests ontology themes server/src server/tests docs"
 
 # NO self-exclusion filters — deliberately (upstream finding; issue #47). The gate's own
 # files live in scripts/, which SCAN_DIRS does not include, so the scan already never sees
