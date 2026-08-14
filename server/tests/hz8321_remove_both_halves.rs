@@ -35,6 +35,24 @@ fn json(bytes: &[u8]) -> serde_json::Value {
     serde_json::from_slice(bytes).unwrap_or(serde_json::Value::Null)
 }
 
+/// Open the store at `root` exactly as a server restart does — load (which replays
+/// any log tail past the checkpoint) and build the engine on the recovered state.
+/// Returns the committed high-water alongside, so a test can assert the tail was
+/// actually seen rather than assuming it.
+fn engine_at(root: &std::path::Path) -> (KanbanEngine, arrow_kanban_server::storage::Seq) {
+    use arrow_kanban_server::storage::StorageBackend;
+    let mut backend = ParquetBackend::open(root).expect("open");
+    let (loaded, seq) = backend.load().expect("load");
+    let engine = KanbanEngine::with_backend(
+        loaded.store,
+        loaded.relations,
+        root.to_path_buf(),
+        HealthGate::new(),
+        backend,
+    );
+    (engine, seq)
+}
+
 fn engine_with(items: &[&str]) -> (tempfile::TempDir, KanbanEngine) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
@@ -45,16 +63,7 @@ fn engine_with(items: &[&str]) -> (tempfile::TempDir, KanbanEngine) {
             .expect("seed item");
     }
     arrow_kanban::persist::save_all(root, &store, &RelationsStore::new()).expect("save_all");
-    let mut backend = ParquetBackend::open(root).expect("open");
-    use arrow_kanban_server::storage::StorageBackend;
-    let (loaded, _seq) = backend.load().expect("load");
-    let engine = KanbanEngine::with_backend(
-        loaded.store,
-        loaded.relations,
-        root.to_path_buf(),
-        HealthGate::new(),
-        backend,
-    );
+    let (engine, _seq) = engine_at(root);
     (tmp, engine)
 }
 
@@ -84,11 +93,11 @@ fn typed_edge_present(engine: &mut KanbanEngine, a: &str, b: &str) -> bool {
 fn flat_deps(engine: &mut KanbanEngine, a: &str) -> Vec<String> {
     // `show` replies with a RENDERED `detail` string, not structured fields — the flat
     // column surfaces as a "  Depends on X, Y" line. Parsing that line is deliberate:
-    // it is the exact surface `nk show` readers see, and the first draft of this file
-    // read a `["item"]["depends_on"]` path that does not exist, which made the
+    // it is the exact surface `arrow-kanban show` readers see, and the first draft of
+    // this file read a `["item"]["depends_on"]` path that does not exist, which made the
     // remover-B flat arm VACUOUSLY GREEN against the unfixed handler (always-empty
-    // reader ⇒ "flat half gone" always true) — the CH-6659 shape, caught by probing
-    // the reply before trusting the arm.
+    // reader ⇒ "flat half gone" always true) — an assertion that cannot fail proves
+    // nothing, caught here by probing the reply before trusting the arm.
     let s = json(&engine.dispatch("show", format!(r#"{{"id":"{a}"}}"#).as_bytes()));
     s["detail"]
         .as_str()
@@ -149,7 +158,8 @@ fn remover_b_relation_remove_clears_the_flat_half_too() {
     assert!(
         flat_deps(&mut engine, "CH-1").is_empty(),
         "remover B: the FLAT half must be gone too — a phantom `depends_on` keeps the \
-         item off the ready frontier for every agent (the two-day CH-6556 shape)"
+         item off the ready frontier for every agent, and a blocker that exists only \
+         in the flat projection is invisible to every typed-edge reader"
     );
 }
 
@@ -187,5 +197,85 @@ fn remover_b_absent_triple_still_refuses() {
     assert!(
         del.get("error").is_some(),
         "an absent triple must refuse, got: {del}"
+    );
+}
+
+/// Fixing the HANDLER is not enough: the same edge-lives-in-two-places rule has to
+/// hold on the REPLAY path, or the fix survives only until the next restart.
+///
+/// A checkpoint that trails the commit log replays the tail on load. The
+/// `RelationRemoved` arm removed only the typed triple, so recovery from a torn
+/// checkpoint put the flat `depends_on` back while `relation query` said the edge
+/// was gone — the phantom blocker this battery exists to prevent, reintroduced by
+/// the recovery path. Same both-halves defect, one code path over.
+///
+/// The crash shape is hand-crafted the way the outbox battery does it: commit the
+/// edge cleanly (checkpoint + log agree), then append a COMMITTED `relation_removed`
+/// line with no matching checkpoint, so `load()` must replay it.
+#[test]
+fn replay_of_relation_removed_clears_the_flat_half_too() {
+    use arrow_kanban_server::events::{MutationEvent, RelationRemovedEvent};
+    use std::io::Write;
+
+    // Seed two items and the edge through the real engine, so the on-disk state is
+    // whatever production actually writes (typed triple + flat projection).
+    let (tmp, mut engine) = engine_with(&["CH-1", "CH-2"]);
+    let root = tmp.path().to_path_buf();
+    add_edge(&mut engine, "CH-1", "CH-2");
+    drop(engine); // release the backend before reopening the same root
+
+    // NEGATIVE CONTROL: before the torn line, a restart still sees BOTH halves. This
+    // is what makes the assertions below evidence — without it, a reader that always
+    // reported "gone" would pass the real check for the wrong reason.
+    let committed_seq = {
+        let (mut clean, seq) = engine_at(&root);
+        assert!(
+            typed_edge_present(&mut clean, "CH-1", "CH-2"),
+            "control: the typed edge is present before the torn replay"
+        );
+        assert_eq!(
+            flat_deps(&mut clean, "CH-1"),
+            vec!["CH-2".to_string()],
+            "control: the flat projection is present before the torn replay"
+        );
+        seq
+    };
+
+    // Crash shape: the removal was appended+fsynced (committed) but the process died
+    // before the checkpoint — append the line WITHOUT updating the checkpoint.
+    let line = serde_json::to_string(&serde_json::json!({
+        "seq": committed_seq + 1,
+        "event": MutationEvent::RelationRemoved(RelationRemovedEvent {
+            source: "CH-1".to_string(),
+            target: "CH-2".to_string(),
+            predicate: "dependsOn".to_string(),
+            agent: None,
+        }),
+    }))
+    .expect("encode line");
+    let dir = arrow_kanban::persist::data_dir(&root).expect("store dir");
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("_events.log"))
+        .expect("open log");
+    writeln!(f, "{line}").expect("append line");
+    drop(f);
+
+    let (mut recovered, seq) = engine_at(&root);
+    assert_eq!(
+        seq,
+        committed_seq + 1,
+        "the committed high-water comes from the log, not the stale checkpoint"
+    );
+    assert!(
+        !typed_edge_present(&mut recovered, "CH-1", "CH-2"),
+        "replay: the typed half must be gone"
+    );
+    assert!(
+        flat_deps(&mut recovered, "CH-1").is_empty(),
+        "replay: the FLAT half must be gone too — otherwise every restart from a \
+         trailing checkpoint resurrects the phantom `depends_on` the handler fix \
+         just removed, and the hot-path fix lasts only until the next recovery"
     );
 }
