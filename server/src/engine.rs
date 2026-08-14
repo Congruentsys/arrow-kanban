@@ -23,9 +23,9 @@ use crate::extension::{EngineExtension, ExtCommand};
 use crate::handlers::ErrorResponse;
 use crate::handlers::core::{
     BoardRequest, CommentRequest, CreateRequest, CreateResponse, DeleteRequest, DeleteResponse,
-    ExportRequest, HddCreateRequest, HistoryRequest, ListRequest, MoveRequest, MoveResponse,
-    NextIdRequest, RankRequest, RatifyRequest, RequeueRequest, RoadmapRequest, ShowRequest,
-    UpdateRequest, WorklistRequest,
+    ExportRequest, FlowRequest, HddCreateRequest, HistoryRequest, ListRequest, MoveRequest,
+    MoveResponse, NextIdRequest, RankRequest, RatifyRequest, RequeueRequest, RoadmapRequest,
+    ShowRequest, UpdateRequest, WorklistRequest,
 };
 use crate::handlers::relations::{RelationAddRequest, RelationQueryRequest, RelationRemoveRequest};
 use crate::health::HealthGate;
@@ -147,6 +147,7 @@ pub enum KanbanCommand {
     Validate,
     Export(ExportRequest),
     Roadmap(RoadmapRequest),
+    Flow(FlowRequest),
     CriticalPath,
     /// `pipeline-health` — unsupported in the open engine (fleet analytics).
     PipelineHealth,
@@ -217,6 +218,7 @@ impl KanbanCommand {
             C::Validate => "validate",
             C::Export(_) => "export",
             C::Roadmap(_) => "roadmap",
+            C::Flow(_) => "flow",
             C::CriticalPath => "critical-path",
             C::PipelineHealth => "pipeline-health",
             C::Worklist(_) => "worklist",
@@ -293,6 +295,7 @@ impl KanbanCommand {
             | C::HddCreate(_, _)
             | C::RelationAdd(_)
             | C::RelationRemove(_) => true,
+            C::Flow(_) => false,
             // A property of the REGISTRATION (from `ExtVerbSpec`), not the opaque
             // `verb_str` — so it travels on the command itself.
             C::Extension(e) => e.is_mutation,
@@ -354,6 +357,7 @@ pub const ALL_VERBS: &[&str] = &[
     "validate",
     "export",
     "roadmap",
+    "flow",
     "critical-path",
     "pipeline-health",
     "worklist",
@@ -448,6 +452,7 @@ fn parse_inner(verb: &str, payload: &[u8]) -> ParseOutcome {
         "validate" => C::Validate,
         "export" => C::Export(req!()),
         "roadmap" => C::Roadmap(req!()),
+        "flow" => C::Flow(req!()),
         "critical-path" => C::CriticalPath,
         "pipeline-health" => C::PipelineHealth,
         "worklist" => C::Worklist(req!()),
@@ -913,6 +918,7 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
             C::Validate => core::handle_validate_typed(&self.store, &self.relations),
             C::Export(req) => core::handle_export_typed(req, &self.store),
             C::Roadmap(req) => core::handle_roadmap_typed(req, &self.store, &self.relations),
+            C::Flow(req) => core::handle_flow_typed(req, &self.store, &self.data_dir),
             C::CriticalPath => core::handle_critical_path_typed(&self.store),
             C::PipelineHealth => Ok(KanbanReply::error(
                 "pipeline-health is a fleet analytics command, not part of the open kanban engine",

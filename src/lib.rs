@@ -27,6 +27,7 @@ pub mod display;
 pub mod experiment_runs;
 pub mod export;
 pub mod file_index;
+pub mod flow;
 pub mod hdd;
 pub mod hooks;
 pub mod id_alloc;

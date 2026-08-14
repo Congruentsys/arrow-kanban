@@ -71,6 +71,7 @@ fn valid_payload(verb: &str) -> Vec<u8> {
         "comment" => serde_json::json!({ "id": "EX-1", "text": "note" }),
         "rank" => serde_json::json!({ "id": "EX-1", "rank": 1 }),
         "show" => serde_json::json!({ "id": "EX-1" }),
+        "flow" => serde_json::json!({ "mode": "wip" }),
         "delete" => serde_json::json!({ "id": "EX-1" }),
         "next-id" => serde_json::json!({ "item_type": "chore" }),
         "hdd.paper" | "hdd.hypothesis" | "hdd.experiment" | "hdd.measure" | "hdd.idea"
