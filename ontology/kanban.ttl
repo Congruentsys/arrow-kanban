@@ -117,10 +117,15 @@ kb:Measure a owl:Class ;
     rdfs:label "Measure" ;
     rdfs:comment "Metric tracked across experiments and being versions. Stays active indefinitely." .
 
+# "Promoted to Hypothesis" described the intended case, not the dominant one. Measured
+# on a worked pair: two ideas produced sixteen definitions — eight on the development
+# board, eight on the research board, of which TWO were hypotheses. An idea fans out to
+# work items of any type on either board; a pass that emits a hypothesis per idea by
+# default is the over-formalization failure, not the model.
 kb:Idea a owl:Class ;
     rdfs:subClassOf kb:ResearchItem ;
     rdfs:label "Idea" ;
-    rdfs:comment "Capture for a potential hypothesis. Promoted to Hypothesis or abandoned." .
+    rdfs:comment "Capture for work not yet defined. Refined, then formalized into one or more items of any type on either board (kb:formalizedAs records which), or abandoned." .
 
 kb:Literature a owl:Class ;
     rdfs:subClassOf kb:ResearchItem ;
@@ -439,6 +444,31 @@ kb:measures a owl:ObjectProperty ;
     rdfs:range kb:Experiment , kb:Hypothesis ;
     rdfs:label "measures" ;
     rdfs:comment "a measure tracks the outcome of an experiment (or, per current practice, a hypothesis)" .
+
+# IDEA PROVENANCE. An idea does not BECOME one item — measured on a worked pair, two
+# ideas produced sixteen definitions across both boards, of which two were hypotheses.
+# So "what did this idea become?" is a fan-out question, and until now the only way to
+# record it was `related`, which cannot tell SPAWNED-BY from MENTIONED-IN — the exact
+# conflation the typed vocabulary exists to remove, reproduced one layer up. An idea
+# formalized with no outgoing edge is indistinguishable from one that evaporated.
+#
+# STORED DIRECTION: formalizedAs, on the Idea. The idea is the acting object (same
+# precedent as closes/leavesRemainder, both stored from the actor), and it makes the
+# filing gate a single read of the idea rather than a scan of every item that might
+# point back. The inverse spelling stays valid and resolves to the same one edge.
+kb:formalizedAs a owl:ObjectProperty ;
+    rdfs:domain kb:Idea ;
+    rdfs:range kb:Item ;
+    owl:inverseOf kb:formalizedFrom ;
+    rdfs:label "formalizedAs" ;
+    rdfs:comment "this idea was formalized into the target work item — the durable answer to 'what did this idea become?'. An idea fans out to MANY targets, so multiple edges are expected. Only ONE direction is stored" .
+
+kb:formalizedFrom a owl:ObjectProperty ;
+    rdfs:domain kb:Item ;
+    rdfs:range kb:Idea ;
+    owl:inverseOf kb:formalizedAs ;
+    rdfs:label "formalizedFrom" ;
+    rdfs:comment "inverse of formalizedAs: this work item was formalized from the target idea. The direction to write at CREATE time (`create <type> ... --relate formalizedFrom:IDEA-X`), because a bad edge refuses the whole create and no orphan is minted" .
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LIFECYCLE STATES + TRANSITIONS (project-directed, 2026-08-13)
