@@ -494,7 +494,7 @@ kb:measures a owl:ObjectProperty ;
 kb:backlog a kb:LifecycleState ;
     kb:board "development" ;
     rdfs:label "backlog" ;
-    kb:transitionsTo kb:planning , kb:ready , kb:in_progress , kb:done ;
+    kb:transitionsTo kb:planning , kb:ready , kb:in_progress , kb:done , kb:stale ;
     rdfs:comment "raw intake — filed, not yet defined (backlog->in_progress stays legal for migration)" .
 
 kb:planning a kb:LifecycleState ;
@@ -526,3 +526,9 @@ kb:done a kb:LifecycleState ;
     rdfs:label "done" ;
     kb:transitionsTo kb:backlog , kb:in_progress ;
     rdfs:comment "terminal (with resolution); reopen paths kept — a close taken back is a real move, measured" .
+
+kb:stale a kb:LifecycleState ;
+    kb:board "development" ;
+    rdfs:label "stale" ;
+    kb:transitionsTo kb:backlog ;
+    rdfs:comment "pre-backlog holding state for superseded-era work (a deliberate operator park; 132 live items rode in on it). Unpark goes to backlog; parking is legal from backlog only." .

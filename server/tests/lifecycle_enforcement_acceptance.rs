@@ -114,6 +114,36 @@ fn force_bypasses_the_model_as_the_audited_repair_valve() {
     );
 }
 
+/// Status EXISTENCE: a junk status is refused naming the set (the typo that used
+/// to silently hide an item from every view), while `stale` — the deliberate
+/// operator park 132 live items rode in on — is accepted BOTH ways (park and
+/// unpark). Landing the refusal without `stale` in the vocabulary would have
+/// orphaned those rows on the deployment's next server swap.
+#[test]
+fn junk_status_refused_but_the_stale_park_survives() {
+    let (_tmp, mut engine) = engine_with(&["CH-9"]);
+
+    let junk = mv(&mut engine, "CH-9", "zzz-not-a-status");
+    assert_eq!(junk["code"].as_str(), Some("UNKNOWN_STATUS"), "{junk}");
+    assert!(
+        junk["error"].as_str().unwrap_or("").contains("stale"),
+        "the refusal names the valid set (incl. stale): {junk}"
+    );
+
+    // The park: backlog -> stale, and the unpark: stale -> backlog.
+    let park = mv(&mut engine, "CH-9", "stale");
+    assert!(
+        park.get("error").is_none(),
+        "the operator park must stay legal: {park}"
+    );
+    let unpark = mv(&mut engine, "CH-9", "backlog");
+    assert!(unpark.get("error").is_none(), "unpark to backlog: {unpark}");
+
+    // Typo-adjacent realism: the one-character slip the hazard names.
+    let typo = mv(&mut engine, "CH-9", "in_progres");
+    assert_eq!(typo["code"].as_str(), Some("UNKNOWN_STATUS"), "{typo}");
+}
+
 #[test]
 fn unknown_states_keep_todays_semantics() {
     // A state the model does not know falls through to the positional rule — a
