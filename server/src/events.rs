@@ -953,15 +953,33 @@ impl MutationEvent {
             // Idempotent in the same way: an already-absent edge is the replayed
             // outcome, not an error (the trailing checkpoint may already carry it).
             MutationEvent::RelationRemoved(e) => {
-                if !relations.has_relation(&e.source, &e.target, &e.predicate) {
-                    return Ok(());
+                if relations.has_relation(&e.source, &e.target, &e.predicate) {
+                    relations
+                        .remove_relation(&e.source, &e.target, &e.predicate)
+                        .map(|_| ())
+                        .map_err(|err| {
+                            format!("replay relation.remove {}->{}: {err}", e.source, e.target)
+                        })?;
                 }
-                relations
-                    .remove_relation(&e.source, &e.target, &e.predicate)
-                    .map(|_| ())
-                    .map_err(|err| {
-                        format!("replay relation.remove {}->{}: {err}", e.source, e.target)
-                    })
+                // Subtract the flat projection too — the handler does this in the same
+                // operation, so a replay that skipped it would resurrect the phantom
+                // `depends_on` on every restart from a trailing checkpoint: the hot path
+                // is fixed, and the next recovery undoes it.
+                //
+                // OUTSIDE the has_relation guard on purpose. That guard exists so an
+                // already-absent triple is not an ERROR (`remove_relation` refuses one),
+                // and it must not also gate the flat half: the two stores checkpoint
+                // separately, so a torn checkpoint can carry the TYPED removal without the
+                // FLAT one — precisely the split-half state this event exists to repair,
+                // and the one case an early return would walk away from. Replay converges
+                // to the logged OUTCOME (this edge is gone from both halves) rather than
+                // re-issuing the command. Subtracting an absent value is a no-op returning
+                // false, so the unconditional call is safe; a predicate with no flat column
+                // is a no-op too. Same shape as the `Updated`/unrelate arm above.
+                if let Some(col) = flat_col_for(&e.predicate) {
+                    let _ = store.remove_from_list_field(&e.source, col, &e.target);
+                }
+                Ok(())
             }
             // The run store is persisted by the handler outside the item
             // checkpoint, so there is no item-store state to replay.
