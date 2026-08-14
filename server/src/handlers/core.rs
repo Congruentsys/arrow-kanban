@@ -1383,6 +1383,82 @@ pub(crate) fn handle_export_typed(
 // Graph computation on the server's RecordBatches — no data leaves the server.
 
 #[derive(Clone, Deserialize)]
+pub struct FlowRequest {
+    /// wip | aging | throughput | cfd
+    pub mode: Option<String>,
+    pub board: Option<String>,
+}
+
+/// Flow & WIP charting — everything derives from the runs audit trail
+/// joined to items (arrow_kanban::flow); no new persistence. Config comes from
+/// the deployment's config file under the data dir (the engine convention, with
+/// the compiled default as the announced fallback — never silent).
+pub(crate) fn handle_flow_typed(
+    req: FlowRequest,
+    store: &KanbanStore,
+    data_dir: &std::path::Path,
+) -> Result<KanbanReply, Vec<u8>> {
+    use arrow_kanban::flow;
+    let cfg_path = data_dir.join(".arrow-kanban/config.yaml");
+    let (config, cfg_src) =
+        match arrow_kanban::config::ConfigFile::from_path(&cfg_path) {
+            Ok(c) => (c, "deployment config".to_string()),
+            Err(_) => (
+                arrow_kanban::config::ConfigFile::from_yaml(
+                    arrow_kanban::config::default_config_yaml(),
+                )
+                .map_err(|e| {
+                    error_response(&format!("default config unparseable: {e}"), "FLOW_CONFIG")
+                })?,
+                "COMPILED DEFAULT (deployment config absent)".to_string(),
+            ),
+        };
+    let board_name = req.board.as_deref().unwrap_or("development");
+    let board = config
+        .board(board_name)
+        .map_err(|e| error_response(&format!("{e}"), "FLOW_CONFIG"))?;
+
+    let items = flow::flow_items(store);
+    let trans = flow::transitions(store);
+    let terminal: std::collections::BTreeSet<String> = ["done", "complete", "abandoned", "retired"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let day_ms: i64 = 86_400_000;
+
+    let mode = req.mode.as_deref().unwrap_or("wip");
+    let view = match mode {
+        "wip" => {
+            let (rows, per_agent) = flow::wip(&items, board);
+            flow::render_wip(&rows, &per_agent)
+        }
+        "aging" => {
+            let now = chrono::Utc::now().timestamp_millis();
+            let rows = flow::aging(&items, &trans, &terminal, now);
+            flow::render_aging(&rows)
+        }
+        "throughput" => {
+            let buckets = flow::throughput(&trans, &items, &terminal, day_ms);
+            flow::render_throughput(&buckets, day_ms)
+        }
+        "cfd" => {
+            let series = flow::status_series(&trans, &items, day_ms, board_name);
+            flow::render_cfd(&series)
+        }
+        other => {
+            return Err(error_response(
+                &format!("unknown flow mode '{other}' — valid: wip, aging, throughput, cfd"),
+                "FLOW_MODE",
+            ));
+        }
+    };
+    Ok(KanbanReply::Value(serde_json::json!({
+        "view": format!("{view}config: {cfg_src}
+    "),
+    })))
+}
+
+#[derive(Clone, Deserialize)]
 pub struct RoadmapRequest {
     #[serde(default)]
     flat: bool,

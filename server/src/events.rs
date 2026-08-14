@@ -384,6 +384,7 @@ pub fn mutation_event(cmd: &KanbanCommand, reply: &KanbanReply) -> Option<Mutati
     use KanbanCommand as C;
     let rv = reply.to_value();
     match cmd {
+        C::Flow(_) => None,
         C::Create(req) => {
             let q = serde_json::to_value(req).ok()?;
             let item_type = ostr(&rv, "item_type").or_else(|| ostr(&q, "item_type"))?;
