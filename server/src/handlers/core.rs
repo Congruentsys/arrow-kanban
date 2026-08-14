@@ -209,6 +209,46 @@ pub(crate) fn handle_move_typed(
         col.value(0).to_string()
     };
 
+    // The lifecycle MODEL enforces the transition (states + transitions live in
+    // ontology/kanban.ttl; the loader is fail-closed). This is the served chokepoint —
+    // the model consult in `validate_transition_for_type` has no caller on this path,
+    // so without this block the model described transitions while the server accepted
+    // anything (definition and behaviour as unrelated things that happen to agree).
+    // Scope mirrors the consult's own guard: the development board's DEFAULT lifecycle.
+    // UnknownState falls through (a custom config state keeps its semantics), and
+    // `--force` bypasses with the same audited semantics as the WIP-limit override —
+    // repair paths (store recovery) need an escape valve, and forced moves are already
+    // recorded in the status history.
+    {
+        let board = {
+            use arrow::array::Array;
+            let col = item
+                .column(arrow_kanban::schema::items_col::BOARD)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+                .expect("board column");
+            col.value(0).to_string()
+        };
+        if board == "development" && !req.force {
+            use arrow_kanban::state_model::{TransitionVerdict, is_legal_transition};
+            if let TransitionVerdict::Illegal { legal_targets } =
+                is_legal_transition(&from_status, &req.status)
+            {
+                return Err(error_response(
+                    &format!(
+                        "Invalid transition: '{}' → '{}' is not in the lifecycle model. \
+                         Legal from '{}': {} (--force bypasses, audited)",
+                        from_status,
+                        req.status,
+                        from_status,
+                        legal_targets.join(", ")
+                    ),
+                    "ILLEGAL_TRANSITION",
+                ));
+            }
+        }
+    }
+
     // Atomic exclusive claim: a `move … in_progress --assign X` is a claim. Reject it
     // if the item is already in_progress under a different agent (without --force) — turns
     // assignment into a true mutex instead of last-writer-wins.
