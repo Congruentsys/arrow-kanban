@@ -59,13 +59,42 @@ pub struct RelationRemoveRequest {
 pub(crate) fn handle_relation_remove_typed(
     req: RelationRemoveRequest,
     relations: &mut RelationsStore,
+    store: &mut arrow_kanban::crud::KanbanStore,
 ) -> Result<KanbanReply, Vec<u8>> {
     relations
         .remove_relation(&req.source_id, &req.target_id, &req.predicate)
         .map_err(|e| error_response(&format!("{e}"), "RELATION_REMOVE_FAILED"))?;
 
+    // An edge lives in TWO places: a `related`/`dependsOn` triple also projects into the
+    // flat `items.related`/`items.depends_on` column the ADD path writes in the same
+    // operation. This remover deleted only the triple and left the projection — a phantom
+    // `depends_on` that keeps the item off the ready frontier for every agent while
+    // `relation query` says the edge is gone. Subtract the projection too; a predicate
+    // with no flat column is a no-op, and the absent-triple REFUSAL above is unchanged
+    // (the flat subtraction is a side effect of a successful typed removal, never a
+    // substitute success). A non-item source (a proposal id) has no flat row — best-effort
+    // by construction, same posture as the update path's projection helpers.
+    let flat_removed = match arrow_kanban::relation_vocab::flat_column_for(&req.predicate) {
+        Some("related") => store
+            .remove_from_list_field(
+                &req.source_id,
+                arrow_kanban::schema::items_col::RELATED,
+                &req.target_id,
+            )
+            .unwrap_or(false),
+        Some("depends_on") => store
+            .remove_from_list_field(
+                &req.source_id,
+                arrow_kanban::schema::items_col::DEPENDS_ON,
+                &req.target_id,
+            )
+            .unwrap_or(false),
+        _ => false,
+    };
+
     Ok(KanbanReply::Value(serde_json::json!({
         "removed": true,
+        "flat_projection_removed": flat_removed,
         "source": req.source_id,
         "target": req.target_id,
         "predicate": req.predicate,
