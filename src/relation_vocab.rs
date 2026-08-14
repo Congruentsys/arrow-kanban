@@ -1196,6 +1196,74 @@ mod tests {
         }
     }
 
+    /// Regression pin: the IDEA-PROVENANCE pair — formalizedAs/formalizedFrom — exists
+    /// ONLY in `kanban.ttl`, not in the compiled fallback, yet validates, looks up and
+    /// inverse-resolves like the compiled set. Same acceptance shape as
+    /// `decision_obligation_pairs_are_loaded_from_data_only`, and mandatory for the same
+    /// reason: the fallback-subset guard is one-directional, so the pre-existing suite
+    /// passing after a vocabulary edit proves only that nothing BROKE, never that the new
+    /// rows LOADED. Goes RED when the `.ttl` block is removed.
+    ///
+    /// This pair is typed, not any->any, so the domain/range arms are the substance: an
+    /// idea is the only legal source of `formalizedAs`, which is what makes the filing
+    /// gate a single read of the idea instead of a scan of everything that might point
+    /// back at it.
+    #[test]
+    fn idea_provenance_pair_is_loaded_from_data_only() {
+        for name in ["formalizedAs", "formalizedFrom"] {
+            assert!(
+                FALLBACK_PREDICATES.iter().all(|p| p.name != name),
+                "'{name}' must NOT be compiled in — it proves the .ttl is the source"
+            );
+        }
+        let fwd = lookup("formalizedAs").expect("'formalizedAs' not loaded from kanban.ttl");
+        assert_eq!(
+            fwd.domain,
+            &["idea"],
+            "only an Idea formalizes AS something"
+        );
+        assert_eq!(
+            fwd.range,
+            &[] as &[&str],
+            "an idea fans out to ANY item type"
+        );
+        assert_eq!(fwd.inverse, Some("formalizedFrom"));
+        let inv = lookup("formalizedFrom").expect("'formalizedFrom' not loaded from kanban.ttl");
+        assert_eq!(
+            inv.domain,
+            &[] as &[&str],
+            "any item may be formalized FROM an idea"
+        );
+        assert_eq!(
+            inv.range,
+            &["idea"],
+            "the target of formalizedFrom is an Idea"
+        );
+        assert_eq!(inv.inverse, Some("formalizedAs"));
+
+        // End-to-end, both spellings, against real ids.
+        assert!(validate_edge("formalizedAs", "IDEA-1", "idea", "CH-2", Some("chore")).is_ok());
+        assert!(validate_edge("formalizedAs", "IDEA-1", "idea", "H-2", Some("hypothesis")).is_ok());
+        assert!(validate_edge("formalizedFrom", "CH-2", "chore", "IDEA-1", Some("idea")).is_ok());
+
+        // The typing is the point, so pin BOTH refusals. Without these the pair would
+        // validate as any->any and the .ttl domain/range lines would be decoration.
+        assert!(
+            validate_edge("formalizedAs", "CH-9", "chore", "CH-2", Some("chore")).is_err(),
+            "a chore must not be able to 'formalizedAs' anything — the domain is Idea"
+        );
+        assert!(
+            validate_edge("formalizedFrom", "CH-2", "chore", "CH-9", Some("chore")).is_err(),
+            "'formalizedFrom' must point AT an idea — the range is Idea"
+        );
+
+        // Loading MORE never opened the vocabulary.
+        assert!(validate_edge("formalizedish", "IDEA-1", "idea", "CH-2", None).is_err());
+        // No flat-column projection — consumers traverse the typed edge.
+        assert_eq!(flat_column_for("formalizedAs"), None);
+        assert_eq!(flat_column_for("formalizedFrom"), None);
+    }
+
     /// The entity classes are LOADED FROM DATA — removing the `.ttl`
     /// class block turns this RED (the red-first pin prescribed for every
     /// vocabulary addition: a green pre-existing suite proves nothing loaded).
