@@ -710,14 +710,14 @@ impl MutationEvent {
                 title: e.title.clone(),
                 item_type: e.item_type.clone(),
                 board: e.board.clone(),
-                agent: None,
+                agent: e.agent.clone(),
             })
             .unwrap_or(serde_json::Value::Null),
             MutationEvent::Moved(e) => serde_json::to_value(ItemMoved {
                 id: e.id.clone(),
                 from: e.from.clone(),
                 to: e.to.clone(),
-                agent: None,
+                agent: e.agent.clone(),
             })
             .unwrap_or(serde_json::Value::Null),
             MutationEvent::Deleted(e) => serde_json::to_value(ItemDeleted { id: e.id.clone() })
@@ -1209,6 +1209,66 @@ mod tests {
         assert_eq!(
             deleted.outbox_payload(),
             serde_json::to_value(ItemDeleted { id: "CH-9".into() }).unwrap()
+        );
+    }
+
+    /// The OUTBOX PAYLOAD carries the acting agent — both legacy arms.
+    ///
+    /// THE BUG THIS PINS. `mutation_event()` computed the actor correctly and the event
+    /// structs carried it, but `outbox_payload()` — the projection that is actually
+    /// PUBLISHED — hardcoded `agent: None`, so every emitted `created`/`moved` event said
+    /// `"agent":null`. Verified live on the fleet bus before the fix: KANBAN_EVENTS seq
+    /// 19338 `{"event_type":"moved","payload":{"agent":null,...}}`.
+    ///
+    /// WHY THE EXISTING PROJECTION TEST DID NOT CATCH IT, which is the reusable lesson:
+    /// `legacy_projections_are_byte_identical_to_the_v1_0_structs` builds its fixtures with
+    /// `agent: None` and asserts the projection equals a struct with `agent: None`. That
+    /// round-trips a null through a function that discards its input — it passes whether or
+    /// not the field is carried. Only a fixture with a POPULATED actor can fail against the
+    /// bug, which is why this test exists beside that one rather than replacing it.
+    ///
+    /// Both legacy arms are pinned (sites 2 · pinned 2/2): the defect was one hardcoded
+    /// `None` per arm, so a single-arm test would leave the other free to regress.
+    #[test]
+    fn outbox_payload_carries_the_acting_agent_on_both_legacy_arms() {
+        let created = MutationEvent::Created(CreatedEvent {
+            agent: Some("Mini/s-4a7ff9da".into()),
+            ..match created_ev() {
+                MutationEvent::Created(e) => e,
+                _ => unreachable!("created_ev() builds a Created event"),
+            }
+        });
+        assert_eq!(
+            created.outbox_payload()["agent"],
+            serde_json::json!("Mini/s-4a7ff9da"),
+            "a created event must publish WHO created it, not null"
+        );
+
+        let moved = MutationEvent::Moved(MovedEvent {
+            id: "CH-9".into(),
+            from: "backlog".into(),
+            to: "in_progress".into(),
+            assignee: Some("A".into()),
+            force: false,
+            reason: None,
+            resolution: None,
+            closed_by: None,
+            agent: Some("DGX1/s-abc".into()),
+            unassign: false,
+        });
+        assert_eq!(
+            moved.outbox_payload()["agent"],
+            serde_json::json!("DGX1/s-abc"),
+            "a moved event must publish WHO moved it, not null"
+        );
+
+        // An ABSENT actor still projects to null — `None` is honest, never fabricated
+        // (the server must not stamp its own host identity — one process would then
+        // appear as the actor on every mutation the whole fleet makes).
+        assert_eq!(
+            created_ev().outbox_payload()["agent"],
+            serde_json::Value::Null,
+            "an unstamped event stays null rather than inventing an actor"
         );
     }
 
