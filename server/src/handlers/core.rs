@@ -219,6 +219,24 @@ pub(crate) fn handle_move_typed(
     // `--force` bypasses with the same audited semantics as the WIP-limit override —
     // repair paths (store recovery) need an escape valve, and forced moves are already
     // recorded in the status history.
+    // STATUS EXISTENCE: any string used to be accepted, so a one-character typo
+    // silently removed an item from every status-filtered view — no error, no
+    // column, no frontier, while the store reported it healthy. The vocabulary is
+    // the same cross-board union the --status filter validates against (which the
+    // model-coherence test keeps in step with the lifecycle data), so a state added
+    // to the ontology becomes movable-to with no second list to update. --force
+    // bypasses as the audited repair valve, same as the transition check below.
+    if !req.force && arrow_kanban::state_machine::validate_status_filter(&req.status).is_err() {
+        return Err(error_response(
+            &format!(
+                "unknown status '{}' — a typo here would silently hide the item from every view. Valid: {} (--force bypasses, audited)",
+                req.status,
+                arrow_kanban::state_machine::VALID_STATUSES.join(", ")
+            ),
+            "UNKNOWN_STATUS",
+        ));
+    }
+
     {
         let board = {
             use arrow::array::Array;

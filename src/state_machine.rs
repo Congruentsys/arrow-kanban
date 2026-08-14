@@ -269,6 +269,9 @@ pub const VALID_STATUSES: &[&str] = &[
     // test below pins the whole set against the LOADED model so this cannot drift again.
     "planning",
     "ready",
+    // The deliberate operator park (pre-backlog holding for superseded-era work);
+    // 132 live items rode in on it while status was unvalidated. In the model.
+    "stale",
 ];
 
 /// Refuse a `--status` filter value that no lifecycle can produce, naming the valid set.
