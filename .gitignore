@@ -1,3 +1,6 @@
 /target
 .arrow-kanban/
 *.parquet
+
+# runtime backup destination (src/backup.rs default) — one machine's state, never repo content
+arrow-kanban-backup/

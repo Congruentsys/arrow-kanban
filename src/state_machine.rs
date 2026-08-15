@@ -272,6 +272,20 @@ pub const VALID_STATUSES: &[&str] = &[
     // The deliberate operator park (pre-backlog holding for superseded-era work);
     // 132 live items rode in on it while status was unvalidated. In the model.
     "stale",
+    // The idea's review-and-refine stage, between capture and filing. NOT in the
+    // lifecycle model above: that model is the DEVELOPMENT board's default lifecycle
+    // (its states carry transitions), and an idea state has no business as a
+    // transition target there. Research statuses have always lived here and only
+    // here — `captured`, `formalized`, `draft`, `active` are all in this const and
+    // none is a kb:LifecycleState — so this row follows the established shape rather
+    // than inventing one.
+    //
+    // ⚠ The coherence test below runs model -> const and CANNOT cover this direction:
+    // it asserts every modelled state is a valid filter, which says nothing about a
+    // status that is deliberately const-only. That is why this entry carries its own
+    // pin (`refining_is_a_valid_status`); without it, removing this line is a silent
+    // regression the whole suite stays green through.
+    "refining",
 ];
 
 /// Refuse a `--status` filter value that no lifecycle can produce, naming the valid set.
@@ -318,6 +332,30 @@ mod tests {
                 state.name
             );
         }
+    }
+
+    /// The idea pipeline's refine stage must be MOVABLE-TO, and nothing else pins it.
+    ///
+    /// The coherence test above runs model -> const, so a const-only research status is
+    /// outside its reach by construction; `refining` is const-only on purpose (it is not
+    /// a development-board transition target). Deleting the const entry would make
+    /// `move IDEA-X refining` refuse with UNKNOWN_STATUS while every other test stayed
+    /// green — the pipeline's claim step, dead, silently.
+    ///
+    /// The negative arm is the half that matters: it fails if someone "fixes" the
+    /// existence check by accepting anything, which would restore the typo hazard the
+    /// check was added for.
+    #[test]
+    fn refining_is_a_valid_status() {
+        assert!(
+            validate_status_filter("refining").is_ok(),
+            "the idea pipeline's refine stage must be a legal status and filter value"
+        );
+        assert!(
+            validate_status_filter("refinning").is_err(),
+            "a near-miss must still refuse — this pin must not be satisfiable by opening \
+             the vocabulary"
+        );
     }
 
     fn dev_board() -> BoardConfig {

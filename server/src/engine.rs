@@ -936,7 +936,7 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
             C::HddRegistry => core::handle_hdd_registry_typed(&self.store, &self.relations),
             C::RelationAdd(req) => relations::handle_relation_add_typed(req, &mut self.relations),
             C::RelationRemove(req) => {
-                relations::handle_relation_remove_typed(req, &mut self.relations)
+                relations::handle_relation_remove_typed(req, &mut self.relations, &mut self.store)
             }
             C::RelationQuery(req) => relations::handle_relation_query_typed(req, &self.relations),
             C::Extension(ext) => match self.extension.as_mut() {
