@@ -1824,7 +1824,14 @@ pub(crate) fn handle_blocked_typed(store: &KanbanStore) -> Result<KanbanReply, V
             .downcast_ref::<BooleanArray>()
             .expect("deleted");
         for i in 0..batch.num_rows() {
-            if !deleted.value(i) && statuses.value(i) == "done" {
+            // CH-8316: a dependency is satisfied by ANY terminal state, not just `done`.
+            // Research-board items terminate at `complete` (experiment/literature) or
+            // `retired` (hypothesis/measure) and NEVER reach `done`, so a bare `== "done"` here
+            // reported every item depending on a finished research item as blocked. The five
+            // experiments (EXPR-3029/3031/3032/5370/8124) that were `complete` with unmet deps
+            // appeared in `nk blocked` output when they should not.
+            if !deleted.value(i) && arrow_kanban::state_machine::is_terminal_state(statuses.value(i))
+            {
                 done_ids.insert(ids.value(i).to_string());
             }
         }
@@ -1846,7 +1853,10 @@ pub(crate) fn handle_blocked_typed(store: &KanbanStore) -> Result<KanbanReply, V
                 .downcast_ref::<StringArray>()
                 .expect("status");
             (0..batch.num_rows()).any(|i| {
-                if statuses.value(i) == "done" {
+                // CH-8316: an item in ANY terminal state is not itself blocked (the SUBJECT side).
+                // Same vocabulary as the satisfied-set above: complete/retired items from the
+                // research board should not appear in blocked output.
+                if arrow_kanban::state_machine::is_terminal_state(statuses.value(i)) {
                     return false;
                 }
                 if depends.is_null(i) || depends.value(i).is_empty() {
