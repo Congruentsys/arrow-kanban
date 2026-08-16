@@ -65,7 +65,11 @@ impl EngineExtension for LegacyExtension {
     fn apply(&mut self, _verb: &str, payload: &[u8]) -> Result<KanbanReply, KanbanReply> {
         let v: serde_json::Value = serde_json::from_slice(payload)
             .map_err(|e| KanbanReply::error(&format!("Invalid JSON: {e}"), "INVALID_PAYLOAD"))?;
-        let row = v.get("row").and_then(|r| r.as_str()).unwrap_or("").to_string();
+        let row = v
+            .get("row")
+            .and_then(|r| r.as_str())
+            .unwrap_or("")
+            .to_string();
         self.rows.push(row.clone());
         Ok(KanbanReply::Value(
             serde_json::json!({ "row": row, "count": self.rows.len() }),
@@ -78,12 +82,7 @@ impl EngineExtension for LegacyExtension {
             payload: reply.to_value(),
         })
     }
-    fn replay(
-        &mut self,
-        _n: &str,
-        _k: &str,
-        _p: &serde_json::Value,
-    ) -> Result<(), String> {
+    fn replay(&mut self, _n: &str, _k: &str, _p: &serde_json::Value) -> Result<(), String> {
         Ok(())
     }
 }
@@ -104,7 +103,10 @@ fn a_apply_only_extension_dispatches_unchanged_through_the_default() {
         "ext.legacy.add",
         serde_json::json!({ "row": "first" }),
     );
-    assert_eq!(r["row"], "first", "the plain apply ran via the default: {r}");
+    assert_eq!(
+        r["row"], "first",
+        "the plain apply ran via the default: {r}"
+    );
     assert_eq!(r["count"], 1);
     assert_eq!(
         engine.committed_seq(),
@@ -199,12 +201,7 @@ impl EngineExtension for ProbeExtension {
         })
     }
 
-    fn replay(
-        &mut self,
-        _n: &str,
-        _k: &str,
-        _p: &serde_json::Value,
-    ) -> Result<(), String> {
+    fn replay(&mut self, _n: &str, _k: &str, _p: &serde_json::Value) -> Result<(), String> {
         self.notes += 1;
         Ok(())
     }
@@ -245,7 +242,11 @@ fn b_extension_reads_core_item_and_relations_through_the_view() {
         serde_json::json!({ "source_id": a_id, "target_id": b_id, "predicate": "related" }),
     );
 
-    let probe = call(&mut engine, "ext.probe.item", serde_json::json!({ "id": a_id }));
+    let probe = call(
+        &mut engine,
+        "ext.probe.item",
+        serde_json::json!({ "id": a_id }),
+    );
     assert_eq!(
         probe["found"], true,
         "the extension sees the core item through CoreRead: {probe}"
@@ -262,7 +263,10 @@ fn b_extension_reads_core_item_and_relations_through_the_view() {
         "ext.probe.item",
         serde_json::json!({ "id": "CH-9999" }),
     );
-    assert_eq!(missing["found"], false, "an absent id reads as absent: {missing}");
+    assert_eq!(
+        missing["found"], false,
+        "an absent id reads as absent: {missing}"
+    );
 }
 
 // ── (c) the view is live: a core move changes what the next probe sees ───────
@@ -279,7 +283,11 @@ fn c_view_is_live_across_core_mutations() {
     );
     let id = c["id"].as_str().expect("created id").to_string();
 
-    let before = call(&mut engine, "ext.probe.item", serde_json::json!({ "id": id }));
+    let before = call(
+        &mut engine,
+        "ext.probe.item",
+        serde_json::json!({ "id": id }),
+    );
     assert_eq!(before["status"], "backlog");
 
     call(
@@ -288,7 +296,11 @@ fn c_view_is_live_across_core_mutations() {
         serde_json::json!({ "id": id, "status": "in_progress" }),
     );
 
-    let after = call(&mut engine, "ext.probe.item", serde_json::json!({ "id": id }));
+    let after = call(
+        &mut engine,
+        "ext.probe.item",
+        serde_json::json!({ "id": id }),
+    );
     assert_eq!(
         after["status"], "in_progress",
         "the probe reads the state of THIS dispatch, not a stale bind: {after}"
