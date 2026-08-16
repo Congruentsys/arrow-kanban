@@ -1,4 +1,5 @@
-//! CH-8316: `nk blocked` must exclude ALL terminal states, not just `done`.
+// SPDX-License-Identifier: MIT
+//! The blocked-item listing must exclude ALL terminal states, not just `done`.
 //!
 //! Research-board items terminate at `complete` (experiment/literature) or
 //! `retired` (hypothesis/measure) and never reach `done`. Before this fix,
@@ -58,11 +59,7 @@ fn mv(engine: &mut KanbanEngine, id: &str, to: &str) -> serde_json::Value {
     ))
 }
 
-fn update_deps(
-    engine: &mut KanbanEngine,
-    id: &str,
-    deps: Vec<&str>,
-) -> serde_json::Value {
+fn update_deps(engine: &mut KanbanEngine, id: &str, deps: Vec<&str>) -> serde_json::Value {
     let deps_json: Vec<String> = deps.iter().map(|d| format!(r#""{d}""#)).collect();
     json(&engine.dispatch(
         "update",
