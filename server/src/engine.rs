@@ -19,7 +19,7 @@
 //! and named — which is what keeps the codec property test (over [`ALL_VERBS`])
 //! exhaustive.
 
-use crate::extension::{EngineExtension, ExtCommand};
+use crate::extension::{CoreRead, EngineExtension, ExtCommand};
 use crate::handlers::ErrorResponse;
 use crate::handlers::core::{
     BoardRequest, CommentRequest, CreateRequest, CreateResponse, DeleteRequest, DeleteResponse,
@@ -940,11 +940,20 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
             }
             C::RelationQuery(req) => relations::handle_relation_query_typed(req, &self.relations),
             C::Extension(ext) => match self.extension.as_mut() {
-                // Run the extension's own apply. Its typed error reply is mapped
-                // into the engine's byte-carrying error channel; `apply`
-                // reconstructs it verbatim via `from_error_bytes`.
+                // Run the extension's own apply, handing it a read-only view of
+                // the live core tables (disjoint field borrows: `extension` is
+                // borrowed mutably, `store`/`relations` immutably). Its typed
+                // error reply is mapped into the engine's byte-carrying error
+                // channel; `apply` reconstructs it verbatim via `from_error_bytes`.
                 Some(x) => x
-                    .apply(&ext.verb, &ext.payload)
+                    .apply_with_core(
+                        &ext.verb,
+                        &ext.payload,
+                        CoreRead {
+                            store: &self.store,
+                            relations: &self.relations,
+                        },
+                    )
                     .map_err(KanbanReply::into_bytes),
                 // Unreachable in practice: `Extension` is only ever constructed
                 // after `classify` claimed the verb, so the extension is present.
