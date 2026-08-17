@@ -2,14 +2,13 @@
 //! An edge lives in TWO places — the typed relations table and the flat
 //! `depends_on`/`related` projection — and the ADD path writes both in one
 //! operation. On REMOVE that property did not hold: each remover cleaned one
-//! half and reported success (measured on the live bus: `--unrelate` cleared
-//! the flat column and left the typed edge; `relation remove` cleared the
-//! typed edge and left the flat column). The halves have different readers —
-//! flat feeds `blocked`/`roadmap`/`critical-path` and the ready-frontier
-//! subtraction; typed feeds `relation query` and campaign rollups — so which
-//! half is stale decides the answer: a phantom blocker on one surface, an
-//! invisible dependency on the other. Both directions pinned here, driving
-//! the REAL engine dispatch, exactly one arm per remover per half.
+//! half and reported success (`relation remove` cleared the typed edge and
+//! left the flat column — measured on the live bus). The halves have different
+//! readers — flat feeds `blocked`/`roadmap`/`critical-path` and the
+//! ready-frontier subtraction; typed feeds `relation query` and campaign
+//! rollups — so which half is stale decides the answer: a phantom blocker on
+//! one surface, an invisible dependency on the other. Both directions pinned
+//! here, driving the REAL engine dispatch, exactly one arm per remover per half.
 
 use arrow_kanban::crud::{CreateItemInput, KanbanStore};
 use arrow_kanban::item_type::ItemType;
@@ -113,6 +112,10 @@ fn flat_deps(engine: &mut KanbanEngine, a: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Regression pin: remover A (`--unrelate`) was ALREADY correct — it has
+/// always cleared both halves. The split-half state arose from `--relate` not
+/// being idempotent (writing two typed rows against a set-valued flat column),
+/// not from remover A leaving a stale typed edge.
 #[test]
 fn remover_a_unrelate_clears_the_typed_half_too() {
     let (_tmp, mut engine) = engine_with(&["CH-1", "CH-2"]);
@@ -277,5 +280,108 @@ fn replay_of_relation_removed_clears_the_flat_half_too() {
         "replay: the FLAT half must be gone too — otherwise every restart from a \
          trailing checkpoint resurrects the phantom `depends_on` the handler fix \
          just removed, and the hot-path fix lasts only until the next recovery"
+    );
+}
+
+/// The torn-state arm: the flat-projection subtraction in the `RelationRemoved`
+/// replay arm is placed OUTSIDE the `has_relation` guard. That placement was
+/// reasoned, not measured — the committed 5-arm battery above is fully green
+/// under the broken inside-the-guard placement, so it cannot discriminate.
+///
+/// This arm verifies the subtraction happens unconditionally by constructing
+/// the split-half state directly: rewrite the checkpoint to remove the TYPED
+/// half while leaving the manifest seq untouched, so the committed tail (which
+/// carries the `relation_removed` event) is still uncovered and must replay.
+/// The replay must then clear the FLAT half even though `has_relation` returns
+/// false — which is exactly the case a guarded early return would walk away from.
+#[test]
+fn replay_removes_the_flat_half_even_when_the_typed_half_is_already_gone() {
+    use arrow_kanban_server::events::{MutationEvent, RelationRemovedEvent};
+    use std::io::Write;
+
+    // 1. Seed two items and commit the edge cleanly through the real engine
+    // (typed + flat, checkpoint and log agree).
+    let (tmp, mut engine) = engine_with(&["CH-1", "CH-2"]);
+    let root = tmp.path().to_path_buf();
+    add_edge(&mut engine, "CH-1", "CH-2");
+    drop(engine);
+
+    // Capture the committed seq BEFORE the removal.
+    let seq_before_removal = {
+        let (_, seq) = engine_at(&root);
+        seq
+    };
+
+    // 2. THE TORN STATE: typed half already gone from the checkpoint, flat half
+    // surviving. Build this directly by loading and rewriting the checkpoint
+    // while leaving the manifest seq untouched — so the committed tail is still
+    // uncovered and will replay.
+    {
+        let (store, mut relations) =
+            arrow_kanban::persist::load_all(&root).expect("load_all for torn checkpoint");
+        relations
+            .remove_relation("CH-1", "CH-2", "dependsOn")
+            .expect("typed removal for the torn checkpoint");
+        arrow_kanban::persist::save_all(&root, &store, &relations).expect("save torn");
+    }
+
+    // 3. Assert the precondition actually holds (typed absent, flat == ["CH-2"]).
+    // Without this, the arm can pass for the wrong reason — the same vacuous-green
+    // trap the battery's `flat_deps` comment already documents.
+    let (mut torn, seq_after_torn) = engine_at(&root);
+    assert_eq!(
+        seq_after_torn, seq_before_removal,
+        "the manifest seq must be unchanged after rewriting the checkpoint"
+    );
+    assert!(
+        !typed_edge_present(&mut torn, "CH-1", "CH-2"),
+        "precondition: the typed half must be gone from the torn checkpoint"
+    );
+    assert_eq!(
+        flat_deps(&mut torn, "CH-1"),
+        vec!["CH-2".to_string()],
+        "precondition: the FLAT half must still be present — if it is also gone, \
+         the arm cannot distinguish a correct unconditional subtraction from a \
+         no-op (both report 'gone')"
+    );
+    drop(torn);
+
+    // 4. Append a COMMITTED relation_removed line with no matching checkpoint,
+    // exactly as the replay arm above does. The log tail now carries a removal
+    // whose typed half was already processed by the torn checkpoint.
+    let line = serde_json::to_string(&serde_json::json!({
+        "seq": seq_after_torn + 1,
+        "event": MutationEvent::RelationRemoved(RelationRemovedEvent {
+            source: "CH-1".to_string(),
+            target: "CH-2".to_string(),
+            predicate: "dependsOn".to_string(),
+            agent: None,
+        }),
+    }))
+    .expect("encode line");
+    let dir = arrow_kanban::persist::data_dir(&root).expect("store dir");
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("_events.log"))
+        .expect("open log");
+    writeln!(f, "{line}").expect("append line");
+    drop(f);
+
+    // 5. Reload and assert the FLAT half is gone. The `has_relation` guard
+    // returns false (the typed half was removed by the torn checkpoint), so
+    // a guarded subtraction would skip the flat update and leave the phantom
+    // `depends_on` resurrected.
+    let (mut recovered, seq_after_replay) = engine_at(&root);
+    assert_eq!(
+        seq_after_replay,
+        seq_after_torn + 1,
+        "the committed high-water comes from the log, including the torn tail"
+    );
+    assert!(
+        flat_deps(&mut recovered, "CH-1").is_empty(),
+        "the FLAT half must be gone even though the typed half was already absent \
+         — this is the case an inside-the-guard placement walks away from, leaving \
+         the phantom blocker intact"
     );
 }

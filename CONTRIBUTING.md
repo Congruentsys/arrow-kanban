@@ -50,8 +50,9 @@ two red checks. One cause, fix it once.
 
 - Branch from `main`; open a PR against `main`. PRs need a passing
   `export-gate`, `red-battery`, and `build-test`, plus a review.
-- `cargo test` and `cargo clippy --all-targets -- -D warnings` should be
-  clean; `cargo fmt` before committing.
+- `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings`
+  should be clean; `cargo fmt` before committing. **Both commands require `--workspace`** —
+  without it, they check only the root crate and skip `server/`.
 - The relationship vocabulary lives in `ontology/kanban.ttl` (data, not
   Rust) — see the README's "Typed relationships" section before adding
   predicates, and pin new pairs with a loader test so a dropped block goes

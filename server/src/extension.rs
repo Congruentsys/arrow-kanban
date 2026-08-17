@@ -15,7 +15,10 @@
 //!   usual `UNKNOWN_COMMAND`. This is consulted ONLY for a verb the core `parse`
 //!   did not recognise, so an extension can never shadow a core verb.
 //! - [`apply`](EngineExtension::apply) — run the verb against the extension's own
-//!   (in-memory, for 3c-i) tables and return a [`KanbanReply`].
+//!   (in-memory, for 3c-i) tables and return a [`KanbanReply`]. The engine
+//!   dispatches through [`apply_with_core`](EngineExtension::apply_with_core),
+//!   whose default delegates here — override it to also read the core tables
+//!   ([`CoreRead`]) while deciding the verb.
 //! - [`derive_event`](EngineExtension::derive_event) — the committed
 //!   [`MutationEvent::Extension`] a successful mutation logs.
 //! - [`replay`](EngineExtension::replay) — rebuild the extension's tables from a
@@ -53,16 +56,47 @@
 use crate::engine::KanbanReply;
 use crate::events::MutationEvent;
 use crate::storage::Seq;
+use arrow_kanban::crud::KanbanStore;
+use arrow_kanban::relations::RelationsStore;
 use std::path::Path;
 use std::sync::Arc;
+
+/// A read-only, borrowed view of the core tables at the point of dispatch.
+///
+/// Handed to [`EngineExtension::apply_with_core`] so an extension can consult
+/// core state (does this item exist? what status is it in? what relations does
+/// it carry?) while deciding its own verb — the capability whose absence forced
+/// downstream deployments to re-implement read paths around the engine instead
+/// of through this seam.
+///
+/// Three properties, all structural rather than conventional:
+/// - **Read-only:** shared references with no interior mutability — there is no
+///   way to reach a mutation through this view.
+/// - **Coherent:** the view is the live pre-commit state of the very dispatch in
+///   flight — exactly what a core handler in the same dispatch would see, one
+///   state, never torn.
+/// - **Un-storable:** the borrow ends with the `apply_with_core` call, so an
+///   extension cannot retain the view past the dispatch (retained reads belong
+///   to [`AggregateSnapshot`](crate::snapshot::AggregateSnapshot), which is the
+///   post-commit, `Arc`-shared read surface).
+pub struct CoreRead<'a> {
+    /// items + runs + item-comments, live at this dispatch.
+    pub store: &'a KanbanStore,
+    /// typed relations, live at this dispatch.
+    pub relations: &'a RelationsStore,
+}
 
 /// A namespaced command extension: one verb family with its own tables, routed
 /// through the engine's commit boundary.
 ///
 /// Methods take `&self`/`&mut self` on the extension's OWN state — the engine
 /// holds the extension and never reaches inside it. The trait is the whole seam;
-/// it carries no core vocabulary, so an extension is free to be anything from a
-/// review workflow to a scratch demo (see the write-path acceptance battery).
+/// it carries no MANDATORY core vocabulary, so an extension is free to be
+/// anything from a review workflow to a scratch demo (see the write-path
+/// acceptance battery): core state is OFFERED read-only through
+/// [`apply_with_core`](Self::apply_with_core)'s [`CoreRead`] view, and an
+/// extension that implements only [`apply`](Self::apply) never names a core
+/// type — the defaulted method drops the view on its way through.
 pub trait EngineExtension {
     /// Does this extension own `verb`, and if so is it a mutation? `None` means
     /// "not this extension's verb" — the engine falls back to `UNKNOWN_COMMAND`.
@@ -77,6 +111,33 @@ pub trait EngineExtension {
     /// [`INVALID_PAYLOAD`](KanbanReply::error) / domain error the extension
     /// produced). Called only after [`classify`](Self::classify) claimed the verb.
     fn apply(&mut self, verb: &str, payload: &[u8]) -> Result<KanbanReply, KanbanReply>;
+
+    /// [`apply`](Self::apply) with a read-only view of the core tables — the
+    /// variant the engine actually dispatches through.
+    ///
+    /// The default delegates to `apply`, dropping the view, so every existing
+    /// impl (and any extension that wants nothing from core) keeps its exact
+    /// behaviour without naming a core type — the same additive-defaulted
+    /// widening the persistence trio (`checkpoint`/`restore`/`snapshot`) used.
+    /// Override it to consult core state while deciding an extension verb:
+    /// validate that a referenced item exists, read its status before accepting
+    /// a proposal against it, answer an extension read verb from core tables.
+    ///
+    /// Deliberately NOT extended to [`derive_event`](Self::derive_event) or
+    /// [`replay`](Self::replay): `replay` must stay a pure function of the
+    /// logged event — a replay that consulted live core state would rebuild
+    /// different tables depending on WHEN the rebuild ran, breaking the
+    /// torn-checkpoint recovery contract — and `derive_event` runs immediately
+    /// after a successful `apply_with_core` in the same dispatch, so anything
+    /// it needs the extension can capture there.
+    fn apply_with_core(
+        &mut self,
+        verb: &str,
+        payload: &[u8],
+        _core: CoreRead<'_>,
+    ) -> Result<KanbanReply, KanbanReply> {
+        self.apply(verb, payload)
+    }
 
     /// The committed event a successful mutation logs, as a
     /// [`MutationEvent::Extension`]. `None` for a read (a non-mutating verb) —

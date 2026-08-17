@@ -968,12 +968,13 @@ impl MutationEvent {
                 //
                 // OUTSIDE the has_relation guard on purpose. That guard exists so an
                 // already-absent triple is not an ERROR (`remove_relation` refuses one),
-                // and it must not also gate the flat half: the two stores checkpoint
-                // separately, so a torn checkpoint can carry the TYPED removal without the
-                // FLAT one — precisely the split-half state this event exists to repair,
-                // and the one case an early return would walk away from. Replay converges
-                // to the logged OUTCOME (this edge is gone from both halves) rather than
-                // re-issuing the command. Subtracting an absent value is a no-op returning
+                // and it must not also gate the flat half. The event's existence proves
+                // both halves were subtracted at commit time (the handler refuses an
+                // absent triple, so the event could not otherwise have been logged), so
+                // replay must converge to that outcome whatever the current typed state is.
+                // The two stores checkpoint separately (and in either order — an interrupted
+                // save can leave EITHER half ahead), so a torn checkpoint can carry one half's
+                // removal without the other. Subtracting an absent value is a no-op returning
                 // false, so the unconditional call is safe; a predicate with no flat column
                 // is a no-op too. Same shape as the `Updated`/unrelate arm above.
                 if let Some(col) = flat_col_for(&e.predicate) {
