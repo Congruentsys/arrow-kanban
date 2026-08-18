@@ -41,14 +41,6 @@ pub struct StatsSnapshot {
     pub timestamp: String,
 }
 
-/// Subject names for events.
-pub mod subjects {
-    pub const CREATED: &str = "kanban.event.created";
-    pub const MOVED: &str = "kanban.event.moved";
-    pub const DELETED: &str = "kanban.event.deleted";
-    pub const STATS: &str = "kanban.event.stats";
-}
-
 /// Serialize an event to JSON bytes for NATS publishing.
 pub fn to_event_bytes<T: Serialize>(event: &T) -> Vec<u8> {
     serde_json::to_vec(event).unwrap_or_else(|_| b"{}".to_vec())
