@@ -1438,7 +1438,9 @@ pub(crate) fn handle_flow_typed(
 
     let items = flow::flow_items(store);
     let trans = flow::transitions(store);
-    let terminal: std::collections::BTreeSet<String> = ["done", "complete", "abandoned", "retired"]
+    // Read from the one source (state_machine::TERMINAL_STATES) rather than
+    // re-hardcoding — the drift surface flagged in CH-8304.
+    let terminal: std::collections::BTreeSet<String> = arrow_kanban::state_machine::TERMINAL_STATES
         .iter()
         .map(|s| s.to_string())
         .collect();
@@ -1474,6 +1476,85 @@ pub(crate) fn handle_flow_typed(
         "view": format!("{view}config: {cfg_src}
     "),
     })))
+}
+
+#[cfg(test)]
+mod flow_terminal_tests {
+    //! CH-8304: handle_flow_typed's terminal set must be READ from
+    //! state_machine::TERMINAL_STATES, never re-hardcoded — a hardcoded copy
+    //! that drifts from the one source silently misclassifies items.
+    use super::*;
+    use arrow_kanban::crud::{CreateItemInput, KanbanStore};
+    use arrow_kanban::item_type::ItemType;
+
+    fn store_with_one_item_in(status: &str) -> KanbanStore {
+        let mut store = KanbanStore::new();
+        let id = store
+            .create_item(&CreateItemInput {
+                title: "t".into(),
+                item_type: ItemType::Chore,
+                priority: None,
+                assignee: None,
+                tags: vec![],
+                related: vec![],
+                depends_on: vec![],
+                body: None,
+            })
+            .unwrap();
+        // Bypass lifecycle transition rules — this test only exercises the
+        // flow charts' terminal classification, not the state machine.
+        store.update_status(&id, status, None, true, None).unwrap();
+        store
+    }
+
+    /// Every status the ONE source calls terminal must be excluded from aging
+    /// and counted by throughput — proving handle_flow_typed reads the source
+    /// rather than a separately-maintained list that could drift from it.
+    #[test]
+    fn every_state_machine_terminal_status_is_terminal_in_flow_charts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        for status in arrow_kanban::state_machine::TERMINAL_STATES.iter().copied() {
+            let store = store_with_one_item_in(status);
+            let aging = handle_flow_typed(
+                FlowRequest {
+                    mode: Some("aging".into()),
+                    board: None,
+                },
+                &store,
+                tmp.path(),
+            )
+            .expect("aging ok");
+            let aging_view = aging_view_str(&aging);
+            assert!(
+                aging_view.contains("no measurable non-terminal items"),
+                "status '{status}' (state_machine::TERMINAL_STATES) leaked into aging \
+                 as non-terminal: {aging_view}"
+            );
+
+            let throughput = handle_flow_typed(
+                FlowRequest {
+                    mode: Some("throughput".into()),
+                    board: None,
+                },
+                &store,
+                tmp.path(),
+            )
+            .expect("throughput ok");
+            let throughput_view = aging_view_str(&throughput);
+            assert!(
+                !throughput_view.contains("no terminal transitions recorded"),
+                "status '{status}' (state_machine::TERMINAL_STATES) was NOT counted as a \
+                 terminal arrival by throughput: {throughput_view}"
+            );
+        }
+    }
+
+    fn aging_view_str(reply: &KanbanReply) -> String {
+        reply.to_value()["view"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    }
 }
 
 #[derive(Clone, Deserialize)]
