@@ -84,6 +84,8 @@ Highlights:
 | `init` | Initialize a board (theme: `nautical`, `software`, or `hdd`) |
 | `create` / `update` / `move` / `comment` | Item CRUD and lifecycle |
 | `list` / `board` / `show` / `query` | Views and search |
+| `query --semantic` | Cosine-similarity search over the `embedding` column |
+| `embed` | Backfill embeddings for items that don't have one |
 | `roadmap` / `critical-path` / `worklist` / `blocked` | Dependency-graph planning |
 | `stats` / `history` | Board metrics and recent activity |
 | `validate` | SHACL conformance checking |
@@ -92,6 +94,51 @@ Highlights:
 | `migrate` | Import markdown files (with turtle frontmatter) into the store |
 | `backup` / `restore` | Snapshot and restore the Arrow store |
 | `templates` / `boards` / `next-id` / `rank` / `next` | Utilities |
+
+## Semantic search (optional)
+
+Every item carries a `FixedSizeList<Float32, 384>` `embedding` column, resident on the item
+row (not a sidecar store), computed at `create` time and searched with a brute-force cosine
+scan — no ANN index, because at kanban scale (hundreds to low thousands of items) a linear
+scan is already fast: **~1.6 ms over 1,000 items** in a release build (measured in
+`semantic::tests::cosine_search_over_a_thousand_items_is_sub_millisecond`, run it yourself
+with `cargo test --release -- --nocapture` to reproduce the number on your hardware).
+
+```bash
+# Default backend: a deterministic, offline, dependency-free hashing-trick embedding
+# (`hash`) — no network, no model download, so a plain `cargo build`/`cargo test` never
+# needs either. Good enough for lexical-overlap ranking; not a neural embedding.
+arrow-kanban create chore "fix the flaky login test"
+arrow-kanban query --semantic "flaky login"
+
+# Real neural embeddings (fastembed-rs, ONNX Runtime, ~25 MB int8-quantized
+# all-MiniLM-L6-v2): opt in at build time, then select it per-command or leave
+# it as the default once compiled in — fastembed-rs ONNX is the shipped
+# default when the feature is present.
+cargo build --features fastembed-backend
+arrow-kanban create chore "fix the flaky login test" --embedding-provider fastembed
+arrow-kanban query --semantic "flaky login" --embedding-provider fastembed
+
+# Backfill items that predate the embedding column, were created with
+# --no-embed, or came in through the NATS server path (which does not yet
+# auto-populate embeddings — see "Known issues").
+arrow-kanban embed --embedding-provider fastembed
+```
+
+`--semantic` composes with the same structural-filter decomposition `query`'s NL mode uses —
+`arrow-kanban query --semantic "chore flaky login"` narrows to `item_type=chore` before
+ranking the rest by cosine similarity, same as plain `query` does for `search`.
+
+**Offline path.** `fastembed-backend` downloads its model from the Hugging Face hub on first
+use and caches it under `$HOME/.cache/huggingface` (`HF_HOME` overrides). For a fully offline
+deployment, pre-populate that cache once (with network) and point `HF_HOME` at it thereafter —
+no model file is vendored into this repository.
+
+A query embedding must come from the **same backend** that wrote the stored column, or the
+cosine scores are meaningless — mixing `hash`-embedded items with a `fastembed` query (or vice
+versa) silently produces low-quality results rather than an error, since both are valid
+384-dimension vectors. `arrow-kanban embed --all --embedding-provider <name>` re-embeds a whole
+board after switching backends.
 
 ## NATS multi-agent mode (optional)
 
@@ -330,6 +377,11 @@ the default view constantly.
 **`next-id` and `next` are unreliable.** `next-id` can return the same id on consecutive calls,
 and `next` can suggest work whose dependencies are unmet. Use `create` (which allocates correctly)
 and `roadmap --ready` / `blocked` instead.
+
+**The NATS server path does not auto-populate `embedding`.** `create`/`update` over `--server`
+leave the column null — computing an embedding needs a live backend instance (real neural
+backends load a model), which is engine-startup plumbing the NATS handlers don't do yet. Run
+`arrow-kanban embed` locally against the same `.arrow-kanban/` store to backfill.
 
 ## Contributing
 

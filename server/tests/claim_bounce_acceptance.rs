@@ -13,6 +13,7 @@ use arrow_kanban_server::storage::ParquetBackend;
 
 fn input(title: &str) -> CreateItemInput {
     CreateItemInput {
+        embedding: None,
         title: title.to_string(),
         item_type: ItemType::Chore,
         priority: None,

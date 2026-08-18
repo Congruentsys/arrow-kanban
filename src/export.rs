@@ -1373,6 +1373,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Arrow Engine".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("critical".to_string()),
@@ -1385,6 +1386,7 @@ mod tests {
             .expect("create");
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "CLI Parity".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -1397,6 +1399,7 @@ mod tests {
             .expect("create");
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Research Paper".to_string(),
                 item_type: ItemType::Paper,
                 priority: Some("medium".to_string()),
@@ -1484,6 +1487,7 @@ mod tests {
         // Add a non-expedition item to dev board
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Cleanup Task".to_string(),
                 item_type: ItemType::Chore,
                 priority: Some("low".to_string()),
@@ -1640,6 +1644,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Rich Content".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -1682,6 +1687,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "JSON Body".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -1721,6 +1727,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Round Trip Test".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -1837,6 +1844,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "XSS <script>alert(1)</script>".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),

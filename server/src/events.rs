@@ -807,6 +807,7 @@ impl MutationEvent {
                     .create_item_with_id(
                         &e.id,
                         &CreateItemInput {
+                            embedding: None,
                             title: e.title.clone(),
                             item_type,
                             priority: e.priority.clone(),

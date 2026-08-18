@@ -500,6 +500,7 @@ fn every_mutating_command_commits_exactly_one_event() {
 
 fn input(_id: &str) -> arrow_kanban::crud::CreateItemInput {
     arrow_kanban::crud::CreateItemInput {
+        embedding: None,
         title: "t".to_string(),
         item_type: arrow_kanban::item_type::ItemType::Chore,
         priority: None,

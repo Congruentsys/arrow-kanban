@@ -83,6 +83,12 @@ pub struct CreateItemInput {
     pub related: Vec<String>,
     pub depends_on: Vec<String>,
     pub body: Option<String>,
+    /// Semantic embedding for this item's text (issue #104), computed by
+    /// the caller (an [`crate::embedding::EmbeddingBackend`]) — `KanbanStore`
+    /// stores the vector but has no ML dependency of its own, so the engine
+    /// core stays generic. `None` leaves the column null (e.g. `--no-embed`,
+    /// or no backend configured).
+    pub embedding: Option<Vec<f32>>,
 }
 
 /// The in-memory kanban store — holds items, runs, and comments as RecordBatches.
@@ -300,6 +306,9 @@ impl KanbanStore {
                 Arc::new(TimestampMillisecondArray::from(vec![now_ms]).with_timezone("UTC")), // updated_at = created_at
                 Arc::new(arrow::array::Int32Array::from(vec![None::<i32>])), // priority_rank
                 Arc::new(arrow::array::Int32Array::from(vec![Some(0)])),     // attempt_count
+                Arc::new(crate::schema::embeddings_to_array(std::slice::from_ref(
+                    &input.embedding,
+                ))), // embedding
             ],
         )?;
 
@@ -368,6 +377,9 @@ impl KanbanStore {
                 Arc::new(TimestampMillisecondArray::from(vec![now_ms]).with_timezone("UTC")), // updated_at
                 Arc::new(arrow::array::Int32Array::from(vec![None::<i32>])), // priority_rank
                 Arc::new(arrow::array::Int32Array::from(vec![Some(0)])),     // attempt_count
+                Arc::new(crate::schema::embeddings_to_array(std::slice::from_ref(
+                    &input.embedding,
+                ))), // embedding
             ],
         )?;
 
@@ -954,6 +966,51 @@ impl KanbanStore {
         self.touch_updated_at(id)
     }
 
+    /// Update an item's stored embedding — the `arrow-kanban embed` backfill
+    /// path (issue #104). Not wired to `update_title`/`update_body`: embeddings
+    /// are populated at item write (create time); re-embedding on every edit
+    /// is a reasonable follow-on this does not claim to solve.
+    pub fn update_embedding(&mut self, id: &str, embedding: Option<Vec<f32>>) -> Result<()> {
+        let (batch_idx, row_idx, _) = self.find_item_mut(id)?;
+        let batch = &self.items_batches[batch_idx];
+
+        let existing = batch
+            .column(items_col::EMBEDDING)
+            .as_any()
+            .downcast_ref::<arrow::array::FixedSizeListArray>()
+            .expect("embedding column");
+
+        let rows: Vec<Option<Vec<f32>>> = (0..batch.num_rows())
+            .map(|i| {
+                if i == row_idx {
+                    embedding.clone()
+                } else if existing.is_null(i) {
+                    None
+                } else {
+                    let values = existing
+                        .value(i)
+                        .as_any()
+                        .downcast_ref::<arrow::array::Float32Array>()
+                        .expect("embedding list values are Float32")
+                        .clone();
+                    Some(values.values().to_vec())
+                }
+            })
+            .collect();
+
+        let mut columns: Vec<Arc<dyn Array>> = Vec::new();
+        for ci in 0..batch.num_columns() {
+            if ci == items_col::EMBEDDING {
+                columns.push(Arc::new(crate::schema::embeddings_to_array(&rows)));
+            } else {
+                columns.push(batch.column(ci).clone());
+            }
+        }
+        let new_batch = RecordBatch::try_new(self.items_schema.clone(), columns)?;
+        self.items_batches[batch_idx] = new_batch;
+        Ok(())
+    }
+
     /// Update an item's resolution (completed, superseded, wont_do, duplicate, obsolete, merged, refuted).
     pub fn update_resolution(&mut self, id: &str, resolution: Option<&str>) -> Result<()> {
         self.update_nullable_string_field(id, items_col::RESOLUTION, resolution)?;
@@ -1435,6 +1492,7 @@ mod tests {
 
     fn sample_input(title: &str, item_type: ItemType) -> CreateItemInput {
         CreateItemInput {
+            embedding: None,
             title: title.to_string(),
             item_type,
             priority: Some("high".to_string()),
@@ -1495,6 +1553,7 @@ mod tests {
         let mut store = KanbanStore::new();
         let id = store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Ship it".to_string(),
                 item_type: ItemType::Chore,
                 priority: None,
@@ -1535,6 +1594,7 @@ mod tests {
         let mut store = KanbanStore::new();
         let id = store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Not doing it".to_string(),
                 item_type: ItemType::Chore,
                 priority: None,
@@ -1800,6 +1860,7 @@ mod tests {
         let body_text = "## Phase 1\n\nDo the thing.\n\n## Phase 2\n\nDo the other thing.";
         let id = store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Body Test".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -1862,6 +1923,7 @@ mod tests {
     fn update_test_item(store: &mut KanbanStore) -> String {
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Update Test".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("medium".to_string()),
@@ -2304,6 +2366,7 @@ mod tests {
     fn item_with_tags(store: &mut KanbanStore, ty: ItemType, tags: &[&str]) -> String {
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "ratify test".into(),
                 item_type: ty,
                 priority: None,
@@ -2437,6 +2500,7 @@ mod tests {
         let mut store = KanbanStore::new();
         let id = store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Backlog w/ stale assignee".into(),
                 item_type: ItemType::Expedition,
                 priority: None,
