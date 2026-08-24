@@ -200,9 +200,7 @@ fn board_config_for(
     let cfg_path = data_dir.join(".arrow-kanban/config.yaml");
     let config = arrow_kanban::config::ConfigFile::from_path(&cfg_path)
         .or_else(|_| {
-            arrow_kanban::config::ConfigFile::from_yaml(
-                arrow_kanban::config::default_config_yaml(),
-            )
+            arrow_kanban::config::ConfigFile::from_yaml(arrow_kanban::config::default_config_yaml())
         })
         .ok()?;
     config.board(board).ok().cloned()
@@ -234,10 +232,10 @@ pub(crate) fn handle_move_typed(
 
     // The lifecycle MODEL enforces the transition (states + transitions live in
     // ontology/kanban.ttl; the loader is fail-closed). This is the served chokepoint —
-    // the model consult in `validate_transition_for_type` has no caller on this path,
-    // so without this block the model described transitions while the server accepted
+    // without this block the model described transitions while the server accepted
     // anything (definition and behaviour as unrelated things that happen to agree).
-    // Scope mirrors the consult's own guard: the development board's DEFAULT lifecycle.
+    // Scope is the development board's DEFAULT lifecycle; the PER-TYPE lifecycles are
+    // consulted by the second block below, which was the same gap one board over.
     // UnknownState falls through (a custom config state keeps its semantics), and
     // `--force` bypasses with the same audited semantics as the WIP-limit override —
     // repair paths (store recovery) need an escape valve, and forced moves are already
@@ -2295,12 +2293,23 @@ mod claim_tests {
         let data_dir = tmp.path();
 
         // Mini claims it: move succeeds AND the assignee column sticks.
-        assert!(handle_move_typed(move_req(&id, "in_progress", "Mini", false), &mut store, data_dir).is_ok());
+        assert!(
+            handle_move_typed(
+                move_req(&id, "in_progress", "Mini", false),
+                &mut store,
+                data_dir
+            )
+            .is_ok()
+        );
         assert_eq!(assignee_of(&store, &id).as_deref(), Some("Mini"));
 
         // DGX1's claim is rejected with CLAIM_CONFLICT — and the owner is unchanged.
-        let err = handle_move_typed(move_req(&id, "in_progress", "DGX1", false), &mut store, data_dir)
-            .expect_err("cross-agent claim must be rejected");
+        let err = handle_move_typed(
+            move_req(&id, "in_progress", "DGX1", false),
+            &mut store,
+            data_dir,
+        )
+        .expect_err("cross-agent claim must be rejected");
         assert!(
             String::from_utf8_lossy(&err).contains("CLAIM_CONFLICT"),
             "expected CLAIM_CONFLICT, got {}",
@@ -2313,7 +2322,14 @@ mod claim_tests {
         );
 
         // --force is the audited handoff escape hatch.
-        assert!(handle_move_typed(move_req(&id, "in_progress", "DGX1", true), &mut store, data_dir).is_ok());
+        assert!(
+            handle_move_typed(
+                move_req(&id, "in_progress", "DGX1", true),
+                &mut store,
+                data_dir
+            )
+            .is_ok()
+        );
         assert_eq!(assignee_of(&store, &id).as_deref(), Some("DGX1"));
     }
 }

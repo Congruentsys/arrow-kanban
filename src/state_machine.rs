@@ -788,6 +788,72 @@ mod tests {
         }
     }
 
+    /// The three-valued surface, arm by arm. The middle value is the one that carries
+    /// the design: "not part of this type's lifecycle" is a DIFFERENT answer from
+    /// "illegal move", and collapsing the two is what would make enforcement over a live
+    /// store an outage rather than a gate.
+    #[test]
+    fn type_transition_verdict_separates_outside_from_illegal() {
+        let board = research_board_with_type_states();
+
+        assert_eq!(
+            type_transition_verdict(&board, "running", "planned", "experiment"),
+            TypeTransitionVerdict::Legal,
+            "the un-claim"
+        );
+
+        // Illegal, and it NAMES what is legal so a refusal can quote them.
+        match type_transition_verdict(&board, "complete", "running", "experiment") {
+            TypeTransitionVerdict::Illegal { legal_targets } => assert_eq!(
+                legal_targets,
+                vec!["abandoned".to_string()],
+                "from a terminal state only the forward tail remains"
+            ),
+            other => panic!("complete -> running must be Illegal, got {other:?}"),
+        }
+
+        // OUTSIDE, three ways it arises on a real store:
+        for (from, to, ty, why) in [
+            (
+                "backlog",
+                "planned",
+                "experiment",
+                "the intake state every item is created at",
+            ),
+            (
+                "running",
+                "backlog",
+                "experiment",
+                "the release target existing tooling uses",
+            ),
+            (
+                "complete",
+                "done",
+                "experiment",
+                "a board-level terminal an item was parked at",
+            ),
+            (
+                "captured",
+                "refining",
+                "idea",
+                "a deliberate const-only status with no lifecycle place",
+            ),
+        ] {
+            assert_eq!(
+                type_transition_verdict(&board, from, to, ty),
+                TypeTransitionVerdict::OutsideLifecycle,
+                "{from} -> {to} ({ty}): {why}"
+            );
+        }
+
+        // A type with no lifecycle of its own has nothing to enforce.
+        assert_eq!(
+            type_transition_verdict(&board, "draft", "active", "chore"),
+            TypeTransitionVerdict::OutsideLifecycle,
+            "a type the board declares no states for"
+        );
+    }
+
     #[test]
     fn test_unknown_type_uses_board_states() {
         let board = research_board_with_type_states();
