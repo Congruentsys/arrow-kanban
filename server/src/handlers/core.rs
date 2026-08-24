@@ -186,9 +186,32 @@ impl MoveResponse {
     }
 }
 
+/// The deployment's board config, for the PER-TYPE lifecycle consult only.
+///
+/// Read from the data dir with the compiled default as the fallback — the same convention,
+/// and the same ordering, the flow handler uses. `None` means neither parses, and the
+/// consult is then SKIPPED: a chokepoint that cannot read its own model must not invent
+/// refusals, and the fail-closed posture that matters here is the loader's (fall back to a
+/// known model), never "refuse the move".
+fn board_config_for(
+    data_dir: &std::path::Path,
+    board: &str,
+) -> Option<arrow_kanban::config::BoardConfig> {
+    let cfg_path = data_dir.join(".arrow-kanban/config.yaml");
+    let config = arrow_kanban::config::ConfigFile::from_path(&cfg_path)
+        .or_else(|_| {
+            arrow_kanban::config::ConfigFile::from_yaml(
+                arrow_kanban::config::default_config_yaml(),
+            )
+        })
+        .ok()?;
+    config.board(board).ok().cloned()
+}
+
 pub(crate) fn handle_move_typed(
     req: MoveRequest,
     store: &mut KanbanStore,
+    data_dir: &std::path::Path,
 ) -> Result<KanbanReply, Vec<u8>> {
     // Validate resolution before the move
     arrow_kanban::state_machine::validate_resolution(req.resolution.as_deref(), &req.status)
@@ -265,6 +288,58 @@ pub(crate) fn handle_move_typed(
                 ));
             }
         }
+
+        // PER-TYPE LIFECYCLES. The block above covers the development board's DEFAULT
+        // lifecycle; a board whose types carry their own state lists (the research
+        // preset's hypothesis/measure/experiment/paper/literature/idea) was covered by
+        // nothing here, and the per-type check had exactly one caller anywhere — the
+        // local-mode CLI. So every served client moved a research item to any status the
+        // cross-board `--status` union contained, which is every status any lifecycle can
+        // produce: the per-type model DESCRIBED lifecycles while this path ACCEPTED
+        // anything, the same shape the block above was written to end for the default one.
+        //
+        // The posture is THREE-VALUED, and that is what makes it deployable rather than an
+        // outage. Items are created at the board intake state and existing tooling parks,
+        // releases and reopens them at statuses no per-type list contains — on a live store
+        // that is most of them. Judging those as ILLEGAL would refuse moves every caller
+        // makes today, and a gate that refuses real moves gets bypassed, which is worse
+        // than no gate. So a move BETWEEN two states of the item type's own lifecycle is
+        // judged; a move touching a state OUTSIDE it falls through untouched.
+        //
+        // Scoped to non-development boards deliberately: the development board already has
+        // the stronger, data-driven transition MODEL above, and keeping this branch off it
+        // means the hot path pays nothing to read a config it would not consult.
+        if board != "development" && !req.force {
+            let item_type = {
+                use arrow::array::Array;
+                let col = item
+                    .column(arrow_kanban::schema::items_col::ITEM_TYPE)
+                    .as_any()
+                    .downcast_ref::<arrow::array::StringArray>()
+                    .expect("type column");
+                col.value(0).to_string()
+            };
+            if let Some(board_cfg) = board_config_for(data_dir, &board) {
+                use arrow_kanban::state_machine::{TypeTransitionVerdict, type_transition_verdict};
+                if let TypeTransitionVerdict::Illegal { legal_targets } =
+                    type_transition_verdict(&board_cfg, &from_status, &req.status, &item_type)
+                {
+                    let targets = if legal_targets.is_empty() {
+                        "(none — terminal)".to_string()
+                    } else {
+                        legal_targets.join(", ")
+                    };
+                    return Err(error_response(
+                        &format!(
+                            "Invalid transition: '{}' → '{}' is not in the {} lifecycle. \
+                             Legal from '{}': {} (--force bypasses, audited)",
+                            from_status, req.status, item_type, from_status, targets
+                        ),
+                        "ILLEGAL_TRANSITION",
+                    ));
+                }
+            }
+        }
     }
 
     // Atomic exclusive claim: a `move … in_progress --assign X` is a claim. Reject it
@@ -339,6 +414,7 @@ pub struct ClaimRequest {
 pub(crate) fn handle_claim_typed(
     req: ClaimRequest,
     store: &mut KanbanStore,
+    data_dir: &std::path::Path,
 ) -> Result<KanbanReply, Vec<u8>> {
     let (_status, holder) = store
         .status_and_assignee(&req.id)
@@ -411,6 +487,7 @@ pub(crate) fn handle_claim_typed(
             closed_by: None,
         },
         store,
+        data_dir,
     )
 }
 
@@ -424,6 +501,7 @@ pub struct BounceRequest {
 pub(crate) fn handle_bounce_typed(
     req: BounceRequest,
     store: &mut KanbanStore,
+    data_dir: &std::path::Path,
 ) -> Result<KanbanReply, Vec<u8>> {
     let body_sha = store
         .body_hash_of(&req.id)
@@ -453,6 +531,7 @@ pub(crate) fn handle_bounce_typed(
             closed_by: None,
         },
         store,
+        data_dir,
     )?;
     let from = match &moved {
         KanbanReply::Move(m) => m.pre_move_status().to_string(),
@@ -2210,13 +2289,17 @@ mod claim_tests {
     fn move_claim_sticks_then_blocks_cross_agent_and_force_overrides() {
         let mut store = KanbanStore::new();
         let id = new_item(&mut store, "Contested");
+        // These items are development-board chores, so the per-type consult never fires;
+        // the dir only has to exist for the config read to be attempted and fall back.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let data_dir = tmp.path();
 
         // Mini claims it: move succeeds AND the assignee column sticks.
-        assert!(handle_move_typed(move_req(&id, "in_progress", "Mini", false), &mut store).is_ok());
+        assert!(handle_move_typed(move_req(&id, "in_progress", "Mini", false), &mut store, data_dir).is_ok());
         assert_eq!(assignee_of(&store, &id).as_deref(), Some("Mini"));
 
         // DGX1's claim is rejected with CLAIM_CONFLICT — and the owner is unchanged.
-        let err = handle_move_typed(move_req(&id, "in_progress", "DGX1", false), &mut store)
+        let err = handle_move_typed(move_req(&id, "in_progress", "DGX1", false), &mut store, data_dir)
             .expect_err("cross-agent claim must be rejected");
         assert!(
             String::from_utf8_lossy(&err).contains("CLAIM_CONFLICT"),
@@ -2230,7 +2313,7 @@ mod claim_tests {
         );
 
         // --force is the audited handoff escape hatch.
-        assert!(handle_move_typed(move_req(&id, "in_progress", "DGX1", true), &mut store).is_ok());
+        assert!(handle_move_typed(move_req(&id, "in_progress", "DGX1", true), &mut store, data_dir).is_ok());
         assert_eq!(assignee_of(&store, &id).as_deref(), Some("DGX1"));
     }
 }
