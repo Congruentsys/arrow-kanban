@@ -854,6 +854,53 @@ mod tests {
         );
     }
 
+    /// THE OTHER WRITERS. The move chokepoint is not the only code that writes the status
+    /// column: the requeue verb writes it directly (`backlog`, or `blocked` once the
+    /// attempt cap is hit) and so does the ratify verb (`in_progress`, voyages only).
+    /// Neither routes through the move handler, so neither consults the per-type gate.
+    ///
+    /// That is SOUND, but only because of a property of the shipped lifecycles rather
+    /// than of those verbs: every state they target sits outside every per-type
+    /// lifecycle, so the gate would have fallen through for them anyway. Add one of
+    /// those states to a per-type lifecycle and the bypass opens silently — a gate whose
+    /// coverage argument lives in a reviewer's head and nowhere in the suite. It lives
+    /// here instead, over the SHIPPED config, and it goes red on the change that would
+    /// open it.
+    #[test]
+    fn the_states_other_status_writers_target_are_outside_every_per_type_lifecycle() {
+        let config = crate::config::ConfigFile::from_yaml(crate::config::default_config_yaml())
+            .expect("the shipped default config parses");
+        let board = config.board("research").expect("research board");
+
+        // Counted INSIDE the loops, so the floor below is what actually ran rather than a
+        // constant asserted against itself.
+        let mut checked = 0usize;
+        let mut types_seen = 0usize;
+        for (item_type, states) in &board.type_states {
+            types_seen += 1;
+            for target in ["backlog", "blocked", "in_progress"] {
+                for own in states {
+                    for (from, to) in [(own.as_str(), target), (target, own.as_str())] {
+                        assert_eq!(
+                            type_transition_verdict(board, from, to, item_type),
+                            TypeTransitionVerdict::OutsideLifecycle,
+                            "{from} -> {to} ({item_type}): '{target}' is written directly by \
+                             the requeue/ratify verbs, which never consult the per-type gate — \
+                             it must not become part of a per-type lifecycle without that \
+                             bypass being closed first"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            types_seen >= 6 && checked >= 120,
+            "the loops must have run over the real shipped lifecycles: \
+             types_seen={types_seen} checked={checked}"
+        );
+    }
+
     #[test]
     fn test_unknown_type_uses_board_states() {
         let board = research_board_with_type_states();
