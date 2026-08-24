@@ -50,8 +50,10 @@ pub type Result<T> = std::result::Result<T, StateError>;
 
 /// Check if a state transition is valid for the given board.
 ///
-/// Valid transitions: state[i] → state[j] where j > i (forward only).
-/// Exception: any state → "done"/"complete"/"abandoned" is always allowed.
+/// The rule is TERMINALITY, not direction: forward moves and idempotent re-moves are
+/// always valid, a NON-terminal state may also move backward within its own lifecycle
+/// (release / re-plan / rework), and a TERMINAL state is absorbing. `--force` is the
+/// audited valve at every chokepoint that consults this.
 pub fn validate_transition(board: &BoardConfig, from: &str, to: &str) -> Result<()> {
     validate_transition_for_type(board, from, to, None)
 }
@@ -124,17 +126,94 @@ pub fn validate_transition_for_type(
         .position(|s| s == to)
         .expect("already validated");
 
-    // Forward transitions are always valid
+    // Forward transitions are always valid.
     if to_idx > from_idx {
         return Ok(());
     }
 
-    // Backward transitions are invalid
+    // An idempotent re-move is bookkeeping, not an error. The transition MODEL already
+    // ruled this (`state_model::is_legal_transition` answers Legal for `from == to`,
+    // because a re-move onto the state an item already holds is routine); the positional
+    // rule refused it, so the two enforcement paths disagreed about the same move.
+    if from_idx == to_idx {
+        return Ok(());
+    }
+
+    // BACKWARD, and this is the half a forward-only rule cannot express.
+    //
+    // Per-type lifecycles are ordered lists whose tail is terminal, so under forward-only
+    // every legal target from a mid-lifecycle state was a CLOSE. An item claimed out of
+    // its queue and then released had nowhere to be released TO: returning it to the
+    // re-offerable head of its own lifecycle was not merely refused, it was inexpressible,
+    // and the only expressible "release" was closing the record. A queue you may enter and
+    // leave only by closing is not a lifecycle.
+    //
+    // So the rule is TERMINALITY, not direction: a live (non-terminal) state may move
+    // anywhere within its own lifecycle — release, re-plan, rework — while a TERMINAL
+    // state is ABSORBING. Releasing is not resurrecting: a closed record stays closed
+    // unless an operator forces it, which is what keeps `complete -> running` refused.
+    if !is_terminal_state(from) {
+        return Ok(());
+    }
+
+    // Backward FROM a terminal state is a resurrection — refused (--force is the valve).
     Err(StateError::InvalidTransition {
         from: from.to_string(),
         to: to.to_string(),
         board: board.name.clone(),
     })
+}
+
+/// The verdict of a PER-TYPE transition query, three-valued for the same reason
+/// [`crate::state_model::TransitionVerdict`] is: a state that is not part of the type's
+/// lifecycle at all is not the same answer as an illegal move between two states that are.
+///
+/// The distinction is what makes this safe to enforce on a live store. Items are created
+/// at the board-level intake state and a deployment's own tooling parks them at states no
+/// per-type list contains, so treating "outside this lifecycle" as ILLEGAL would refuse
+/// moves that every existing caller makes today. It is reported as its own verdict and the
+/// caller owns the migration posture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeTransitionVerdict {
+    /// Both states are in this type's lifecycle and the move is allowed.
+    Legal,
+    /// Both states are in this type's lifecycle and the move is not; carries the legal
+    /// targets so a refusal can NAME them.
+    Illegal { legal_targets: Vec<String> },
+    /// The type has no lifecycle of its own, or one of the two states is not in it.
+    /// Never silently legal, never silently illegal.
+    OutsideLifecycle,
+}
+
+/// Answer `from -> to` against ONE item type's own lifecycle, three-valued.
+///
+/// This is the query surface a chokepoint needs: [`validate_transition_for_type`] collapses
+/// "not in this lifecycle" into the same `Err` as "illegal move", which is right for a
+/// caller that owns its own data and wrong for one enforcing over a store it inherited.
+pub fn type_transition_verdict(
+    board: &BoardConfig,
+    from: &str,
+    to: &str,
+    item_type: &str,
+) -> TypeTransitionVerdict {
+    let Some(states) = board.type_states.get(item_type) else {
+        return TypeTransitionVerdict::OutsideLifecycle;
+    };
+    if !states.iter().any(|s| s == from) || !states.iter().any(|s| s == to) {
+        return TypeTransitionVerdict::OutsideLifecycle;
+    }
+    if validate_transition_for_type(board, from, to, Some(item_type)).is_ok() {
+        return TypeTransitionVerdict::Legal;
+    }
+    let legal_targets = states
+        .iter()
+        .filter(|t| {
+            t.as_str() != from
+                && validate_transition_for_type(board, from, t, Some(item_type)).is_ok()
+        })
+        .cloned()
+        .collect();
+    TypeTransitionVerdict::Illegal { legal_targets }
 }
 
 /// Check WIP limits for a target status.
@@ -627,10 +706,86 @@ mod tests {
         assert!(
             validate_transition_for_type(&board, "captured", "abandoned", Some("idea")).is_ok()
         );
-        // Can't go backward
+        // Backward within a LIVE lifecycle is the release/rework edge and is legal —
+        // `formalized -> captured` is structurally the same move as `running -> planned`,
+        // so a rule that admits one and refuses the other would be a carve-out, not a
+        // rule. What stays refused is backward from a TERMINAL state (`abandoned`), which
+        // `a_terminal_state_is_absorbing` pins for every type.
         assert!(
-            validate_transition_for_type(&board, "formalized", "captured", Some("idea")).is_err()
+            validate_transition_for_type(&board, "formalized", "captured", Some("idea")).is_ok()
         );
+        assert!(
+            validate_transition_for_type(&board, "abandoned", "captured", Some("idea")).is_err()
+        );
+    }
+
+    /// A claimed-then-released item must have somewhere to go BACK to.
+    ///
+    /// The per-type lifecycles are ordered LISTS and the positional rule used to be
+    /// forward-only, so from `running` every legal target was terminal (`complete`,
+    /// `abandoned`): returning a released experiment to the re-offerable head of its own
+    /// queue was not merely refused, it was inexpressible. A queue you can enter and
+    /// never leave except by closing is not a lifecycle.
+    #[test]
+    fn a_release_returns_a_running_item_to_its_queue() {
+        let board = research_board_with_type_states();
+        assert!(
+            validate_transition_for_type(&board, "running", "planned", Some("experiment")).is_ok(),
+            "running -> planned is the un-claim: the ONLY non-terminal target from 'running'"
+        );
+        // The same shape one lifecycle over — this is a property of live lifecycles, not
+        // a special case carved for one type.
+        assert!(
+            validate_transition_for_type(&board, "review", "writing", Some("paper")).is_ok(),
+            "review -> writing is the same edge wearing a different name"
+        );
+        assert!(
+            validate_transition_for_type(&board, "active", "draft", Some("hypothesis")).is_ok(),
+            "active -> draft likewise"
+        );
+    }
+
+    /// The other half of the same rule, and the half that must NOT widen: a terminal
+    /// state is ABSORBING. Releasing is not resurrecting — a closed record stays closed
+    /// unless an operator forces it.
+    #[test]
+    fn a_terminal_state_is_absorbing() {
+        let board = research_board_with_type_states();
+        for (from, to, ty) in [
+            ("complete", "running", "experiment"),
+            ("complete", "planned", "experiment"),
+            ("abandoned", "planned", "experiment"),
+            ("retired", "active", "hypothesis"),
+            ("retired", "draft", "measure"),
+            ("complete", "writing", "paper"),
+        ] {
+            assert!(
+                validate_transition_for_type(&board, from, to, Some(ty)).is_err(),
+                "{from} -> {to} ({ty}) is a resurrection and must stay refused"
+            );
+        }
+    }
+
+    /// An idempotent re-move is bookkeeping, not an error — the transition MODEL already
+    /// ruled this (`is_legal_transition` returns Legal for `from == to`) while the
+    /// positional rule refused it, so the two enforcement paths disagreed about the same
+    /// move. They agree now, and the direction is the permissive one: turning a no-op
+    /// into an error is the change no caller expects.
+    #[test]
+    fn an_idempotent_re_move_is_legal_at_every_state_including_terminal() {
+        let board = research_board_with_type_states();
+        for (state, ty) in [
+            ("planned", "experiment"),
+            ("running", "experiment"),
+            ("complete", "experiment"),
+            ("abandoned", "experiment"),
+            ("retired", "hypothesis"),
+        ] {
+            assert!(
+                validate_transition_for_type(&board, state, state, Some(ty)).is_ok(),
+                "{state} -> {state} ({ty}) is a no-op re-move, not a refusal"
+            );
+        }
     }
 
     #[test]
