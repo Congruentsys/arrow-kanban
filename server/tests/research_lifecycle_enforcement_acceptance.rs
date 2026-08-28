@@ -24,6 +24,7 @@ use arrow_kanban_server::storage::ParquetBackend;
 
 fn input(title: &str, item_type: ItemType) -> CreateItemInput {
     CreateItemInput {
+        embedding: None,
         title: title.to_string(),
         item_type,
         priority: None,
