@@ -2,14 +2,20 @@
 //! The lifecycle model ENFORCES transitions at the served move (PR #89).
 //!
 //! PR #87 loaded states + transitions from data and wired the consult into
-//! `validate_transition_for_type` — which has no caller on the served path, so
+//! `validate_transition_for_type` — which had no caller on the served path, so
 //! the model DESCRIBED transitions while the server ACCEPTED anything: the
 //! definition and the behaviour were unrelated things that happened to agree.
 //! These arms pin the served chokepoint itself: an illegal development-board
 //! transition is refused with a typed error NAMING the legal targets; a legal
 //! one passes; `--force` bypasses (the audited repair valve, mirroring the
-//! WIP-limit override); non-development boards and unknown states keep their
-//! existing semantics.
+//! WIP-limit override); unknown states keep their existing semantics.
+//!
+//! SCOPE: these arms own the DEVELOPMENT board's default lifecycle only. The
+//! per-TYPE lifecycles — the same gap, one board over, left open here because
+//! this battery's own `unknown_states_keep_todays_semantics` arm is about states
+//! and not about types — are owned by
+//! `research_lifecycle_enforcement_acceptance.rs`. Neither battery's green says
+//! anything about the other's board.
 
 use arrow_kanban::crud::{CreateItemInput, KanbanStore};
 use arrow_kanban::item_type::ItemType;

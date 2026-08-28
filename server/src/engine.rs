@@ -898,9 +898,9 @@ impl<B: StorageBackend, L: WriterLease> KanbanEngine<B, L> {
 
         match cmd {
             C::Create(req) => core::handle_create_typed(req, &mut self.store, &mut self.relations),
-            C::Move(req) => core::handle_move_typed(req, &mut self.store),
-            C::Claim(req) => core::handle_claim_typed(req, &mut self.store),
-            C::Bounce(req) => core::handle_bounce_typed(req, &mut self.store),
+            C::Move(req) => core::handle_move_typed(req, &mut self.store, &self.data_dir),
+            C::Claim(req) => core::handle_claim_typed(req, &mut self.store, &self.data_dir),
+            C::Bounce(req) => core::handle_bounce_typed(req, &mut self.store, &self.data_dir),
             C::Requeue(req) => core::handle_requeue_typed(req, &mut self.store),
             C::Ratify(req) => core::handle_ratify_typed(req, &mut self.store),
             C::Update(req) => core::handle_update_typed(req, &mut self.store, &mut self.relations),
