@@ -1577,6 +1577,7 @@ mod flow_terminal_tests {
                 related: vec![],
                 depends_on: vec![],
                 body: None,
+                embedding: None,
             })
             .unwrap();
         // Bypass lifecycle transition rules — this test only exercises the
