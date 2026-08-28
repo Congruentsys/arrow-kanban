@@ -509,6 +509,7 @@ mod tests {
         // Create some items
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Arrow Engine".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -522,6 +523,7 @@ mod tests {
 
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Fix tests".to_string(),
                 item_type: ItemType::Chore,
                 priority: Some("medium".to_string()),
@@ -535,6 +537,7 @@ mod tests {
 
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Documentation".to_string(),
                 item_type: ItemType::Chore,
                 priority: Some("low".to_string()),

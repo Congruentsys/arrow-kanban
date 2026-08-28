@@ -31,6 +31,7 @@ fn populated_store() -> (KanbanStore, TestIds) {
     // Create the independent item first so we know its ID for depends_on
     let independent = store
         .create_item(&CreateItemInput {
+            embedding: None,
             title: "Independent expedition".to_string(),
             item_type: ItemType::Expedition,
             priority: Some("medium".to_string()),
@@ -45,6 +46,7 @@ fn populated_store() -> (KanbanStore, TestIds) {
     // Blocked item depends on the independent item
     let blocked = store
         .create_item(&CreateItemInput {
+            embedding: None,
             title: "Blocked expedition".to_string(),
             item_type: ItemType::Expedition,
             priority: Some("high".to_string()),
@@ -58,6 +60,7 @@ fn populated_store() -> (KanbanStore, TestIds) {
 
     let critical = store
         .create_item(&CreateItemInput {
+            embedding: None,
             title: "Critical work".to_string(),
             item_type: ItemType::Expedition,
             priority: Some("critical".to_string()),
@@ -71,6 +74,7 @@ fn populated_store() -> (KanbanStore, TestIds) {
 
     let low = store
         .create_item(&CreateItemInput {
+            embedding: None,
             title: "Low priority cleanup".to_string(),
             item_type: ItemType::Expedition,
             priority: Some("low".to_string()),
@@ -84,6 +88,7 @@ fn populated_store() -> (KanbanStore, TestIds) {
 
     let chore = store
         .create_item(&CreateItemInput {
+            embedding: None,
             title: "Unranked chore".to_string(),
             item_type: ItemType::Chore,
             priority: None,
@@ -431,6 +436,7 @@ fn test_boards_with_research_items() {
 
     store
         .create_item(&CreateItemInput {
+            embedding: None,
             title: "Test paper".to_string(),
             item_type: ItemType::Paper,
             priority: None,

@@ -159,6 +159,7 @@ mod tests {
                 ), // updated_at
                 Arc::new(arrow::array::Int32Array::from(vec![None::<i32>; n])), // priority_rank
                 Arc::new(arrow::array::Int32Array::from(vec![Some(0); n])), // attempt_count
+                Arc::new(crate::schema::embeddings_to_array(&vec![None; n])), // embedding
             ],
         )
         .expect("should create batch")

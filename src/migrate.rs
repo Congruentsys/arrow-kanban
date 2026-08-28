@@ -594,6 +594,10 @@ fn build_items_batch(items: &[ParsedItem]) -> Result<RecordBatch> {
             Arc::new(TimestampMillisecondArray::from(vec![None::<i64>; n]).with_timezone("UTC")), // updated_at
             Arc::new(arrow::array::Int32Array::from(vec![None::<i32>; n])), // priority_rank
             Arc::new(arrow::array::Int32Array::from(vec![Some(0); n])),     // attempt_count
+            // Legacy markdown/turtle import predates embeddings — the column stays
+            // null here; a subsequent `arrow-kanban embed` pass (or item write)
+            // populates it, same as any other item with no embedding yet.
+            Arc::new(crate::schema::embeddings_to_array(&vec![None; n])), // embedding
         ],
     )?;
 
@@ -1201,7 +1205,7 @@ Some body content here.
 
         let batch = build_items_batch(&items).expect("build batch");
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 19);
+        assert_eq!(batch.num_columns(), 20);
 
         let ids = batch
             .column(items_col::ID)
@@ -1430,7 +1434,7 @@ Another body.
         // Verify items batch builds correctly
         let batch = result.items_batch().expect("items batch");
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 19);
+        assert_eq!(batch.num_columns(), 20);
 
         // Verify runs batch
         let runs_batch = result.runs_batch().expect("runs batch");

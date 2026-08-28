@@ -27,6 +27,7 @@ fn reload_lock() -> std::sync::MutexGuard<'static, ()> {
 
 fn input(title: &str) -> CreateItemInput {
     CreateItemInput {
+        embedding: None,
         title: title.to_string(),
         item_type: ItemType::Chore,
         priority: None,

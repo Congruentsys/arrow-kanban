@@ -1,15 +1,22 @@
 // SPDX-License-Identifier: MIT
 //! Arrow schemas for the kanban engine tables.
 //!
-//! Five tables:
-//! - `ItemsTable` — work items (expeditions, chores, papers, etc.)
+//! Four tables:
+//! - `ItemsTable` — work items (expeditions, chores, papers, etc.) — carries the
+//!   `embedding` column resident on the row, not a fifth sidecar table
 //! - `RelationsTable` — links between items (implements, spawns, blocks, related_to)
 //! - `RunsTable` — status change history (audit trail)
 //! - `CommentsTable` — item comments (threaded, resolvable)
-//! - `EmbeddingsTable` — semantic embeddings for search
 
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use std::sync::Arc;
+
+/// Fixed width of the `embedding` column. 384 matches the small
+/// sentence-transformer models used by both shipped backends
+/// ([`crate::embedding::HashEmbedBackend`] and the optional
+/// `fastembed-backend`'s `AllMiniLML6V2Q`) — changing it is a breaking schema
+/// change, so it is a named constant rather than a magic number at each call site.
+pub const EMBED_DIM: i32 = 384;
 
 /// Named column indices for ItemsTable.
 pub mod items_col {
@@ -32,6 +39,10 @@ pub mod items_col {
     pub const UPDATED_AT: usize = 16;
     pub const PRIORITY_RANK: usize = 17;
     pub const ATTEMPT_COUNT: usize = 18;
+    /// `FixedSizeList<Float32, EMBED_DIM>`, nullable — absent on items created
+    /// before this column existed, or written with `--no-embed`. Populated at
+    /// item write, resident on the RecordBatch (never a sidecar store).
+    pub const EMBEDDING: usize = 19;
 }
 
 /// Named column indices for RelationsTable.
@@ -111,7 +122,53 @@ pub fn items_schema() -> Arc<Schema> {
         // Requeue attempts (issue #40). Nullable for backward compat with old
         // Parquet — a null reads as 0 (the item predates the column).
         Field::new("attempt_count", DataType::Int32, true),
+        // Semantic embedding (issue #104). Nullable — appended last so
+        // `persist::normalize_batch` fills it with nulls for pre-existing
+        // Parquet files (the same backward-compat path attempt_count uses).
+        Field::new(
+            "embedding",
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                EMBED_DIM,
+            ),
+            true,
+        ),
     ]))
+}
+
+/// Build the `embedding` column from one optional vector per row (issue #104).
+///
+/// `Some(v)` rows must carry exactly [`EMBED_DIM`] values (debug-asserted —
+/// callers own dimension agreement between the configured backend and the
+/// stored column; a mismatched build is a caller bug, not a runtime input to
+/// validate). `None` rows are stored null (no backend configured, `--no-embed`,
+/// or — via [`crate::persist`]'s generic trailing-column fill — an older
+/// Parquet file that predates this column entirely).
+pub fn embeddings_to_array(embeddings: &[Option<Vec<f32>>]) -> arrow::array::FixedSizeListArray {
+    use arrow::array::{FixedSizeListBuilder, Float32Builder};
+    let mut builder = FixedSizeListBuilder::new(Float32Builder::new(), EMBED_DIM);
+    for e in embeddings {
+        match e {
+            Some(v) => {
+                debug_assert_eq!(
+                    v.len(),
+                    EMBED_DIM as usize,
+                    "embedding dimension mismatch — caller's backend does not match EMBED_DIM"
+                );
+                for x in v {
+                    builder.values().append_value(*x);
+                }
+                builder.append(true);
+            }
+            None => {
+                for _ in 0..EMBED_DIM {
+                    builder.values().append_null();
+                }
+                builder.append(false);
+            }
+        }
+    }
+    builder.finish()
 }
 
 /// Schema for the Relations table — cross-item and cross-board links.
@@ -216,7 +273,7 @@ mod tests {
     #[test]
     fn test_items_schema_creates_record_batch() {
         let schema = items_schema();
-        assert_eq!(schema.fields().len(), 19);
+        assert_eq!(schema.fields().len(), 20);
         assert_eq!(schema.field(items_col::ID).name(), "id");
         assert_eq!(schema.field(items_col::TITLE).name(), "title");
         assert_eq!(schema.field(items_col::DELETED).name(), "deleted");
@@ -259,12 +316,19 @@ mod tests {
                 Arc::new(TimestampMillisecondArray::from(vec![None::<i64>]).with_timezone("UTC")), // updated_at
                 Arc::new(arrow::array::Int32Array::from(vec![None::<i32>])), // priority_rank
                 Arc::new(arrow::array::Int32Array::from(vec![Some(0)])),     // attempt_count
+                Arc::new(arrow::array::new_null_array(
+                    &DataType::FixedSizeList(
+                        Arc::new(Field::new("item", DataType::Float32, true)),
+                        EMBED_DIM,
+                    ),
+                    1,
+                )), // embedding
             ],
         )
         .expect("should create items RecordBatch");
 
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 19);
+        assert_eq!(batch.num_columns(), 20);
     }
 
     #[test]
@@ -333,6 +397,14 @@ mod tests {
         assert_eq!(
             schema.field(items_col::ATTEMPT_COUNT).name(),
             "attempt_count"
+        );
+        assert_eq!(schema.field(items_col::EMBEDDING).name(), "embedding");
+        assert_eq!(
+            schema.field(items_col::EMBEDDING).data_type(),
+            &DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                EMBED_DIM,
+            )
         );
 
         let rel_schema = relations_schema();

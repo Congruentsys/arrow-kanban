@@ -473,6 +473,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Arrow Engine".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -485,6 +486,7 @@ mod tests {
             .expect("create");
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Fix tests".to_string(),
                 item_type: ItemType::Chore,
                 priority: Some("medium".to_string()),
@@ -593,6 +595,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Café Ünicode — Multibyte Truncation Test".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -620,6 +623,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Rich Content".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -652,6 +656,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Tagged Item".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -686,6 +691,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Linked Item".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -709,6 +715,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Dependent Item".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -747,6 +754,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Fully Linked".to_string(),
                 item_type: ItemType::Voyage,
                 priority: Some("critical".to_string()),

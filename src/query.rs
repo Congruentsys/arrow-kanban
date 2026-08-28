@@ -1041,6 +1041,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Arrow Engine".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("critical".to_string()),
@@ -1053,6 +1054,7 @@ mod tests {
             .expect("create");
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Fix tests".to_string(),
                 item_type: ItemType::Chore,
                 priority: Some("medium".to_string()),
@@ -1080,6 +1082,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Item A".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -1106,6 +1109,7 @@ mod tests {
         for i in 0..5 {
             store
                 .create_item(&CreateItemInput {
+                    embedding: None,
                     title: format!("Item {i}"),
                     item_type: ItemType::Chore,
                     priority: None,
@@ -1142,6 +1146,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Arrow Engine".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -1154,6 +1159,7 @@ mod tests {
             .expect("create");
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Fix tests".to_string(),
                 item_type: ItemType::Chore,
                 priority: None,
@@ -1177,6 +1183,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Arrow-Kanban Engine".to_string(),
                 item_type: ItemType::Expedition,
                 priority: None,
@@ -1189,6 +1196,7 @@ mod tests {
             .expect("create");
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Signal Fusion Pipeline".to_string(),
                 item_type: ItemType::Expedition,
                 priority: None,
@@ -1215,6 +1223,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Arrow Engine".to_string(),
                 item_type: ItemType::Expedition,
                 priority: None,
@@ -1329,6 +1338,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Blocker".to_string(),
                 item_type: ItemType::Expedition,
                 priority: None,
@@ -1343,6 +1353,7 @@ mod tests {
 
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Blocked Item".to_string(),
                 item_type: ItemType::Expedition,
                 priority: None,

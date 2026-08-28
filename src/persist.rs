@@ -287,6 +287,7 @@ mod tests {
         let mut store = KanbanStore::new();
         let id = store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Test Expedition".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -335,8 +336,10 @@ mod tests {
         let full = items_schema();
         assert_eq!(
             full.fields().len(),
-            items_col::ATTEMPT_COUNT + 1,
-            "attempt_count is the LAST column (this test builds 'old' data as all-but-last)"
+            items_col::EMBEDDING + 1,
+            "embedding is now the LAST column (EX-8693) — attempt_count is no longer trailing, \
+             so this test's 'old' fixture (built as all-columns-before-attempt_count) exercises \
+             the SAME generic pad-with-nulls path for two missing trailing columns at once"
         );
         let old_schema =
             arrow::datatypes::Schema::new(full.fields()[..items_col::ATTEMPT_COUNT].to_vec());
@@ -388,12 +391,16 @@ mod tests {
         let item = loaded.get_item("CH-100").expect("item present");
         assert_eq!(
             item.num_columns(),
-            items_col::ATTEMPT_COUNT + 1,
-            "padded to 19"
+            items_col::EMBEDDING + 1,
+            "padded to the full current schema (20) — both attempt_count and embedding are missing"
         );
         assert!(
             item.column(items_col::ATTEMPT_COUNT).is_null(0),
             "pad is null, not 0 — provenance of 'predates the column' is preserved"
+        );
+        assert!(
+            item.column(items_col::EMBEDDING).is_null(0),
+            "embedding pad is null too — same generic trailing-column fill, EX-8693"
         );
         assert_eq!(loaded.attempt_count("CH-100").expect("readable"), 0);
 
@@ -426,6 +433,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Test".to_string(),
                 item_type: ItemType::Expedition,
                 priority: None,

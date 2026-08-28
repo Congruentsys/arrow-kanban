@@ -128,6 +128,7 @@ pub fn create_paper(
     extra_related: Vec<String>,
 ) -> Result<HddCreateResult> {
     let input = CreateItemInput {
+        embedding: None,
         title: title.to_string(),
         item_type: ItemType::Paper,
         priority: Some("medium".to_string()),
@@ -175,6 +176,7 @@ pub fn create_hypothesis(
 
     // Create the item with the custom ID
     let input = CreateItemInput {
+        embedding: None,
         title: title.to_string(),
         item_type: ItemType::Hypothesis,
         priority: Some("medium".to_string()),
@@ -232,6 +234,7 @@ pub fn create_experiment(
     related.extend(extra_related);
 
     let input = CreateItemInput {
+        embedding: None,
         title: title.to_string(),
         item_type: ItemType::Experiment,
         priority: Some("medium".to_string()),
@@ -279,6 +282,7 @@ pub fn create_measure(
     related.extend(extra_related);
 
     let input = CreateItemInput {
+        embedding: None,
         title: title.to_string(),
         item_type: ItemType::Measure,
         priority: Some("medium".to_string()),
@@ -310,6 +314,7 @@ pub fn create_idea(
     extra_related: Vec<String>,
 ) -> Result<HddCreateResult> {
     let input = CreateItemInput {
+        embedding: None,
         title: title.to_string(),
         item_type: ItemType::Idea,
         priority: Some("low".to_string()),
@@ -336,6 +341,7 @@ pub fn create_literature(
     extra_related: Vec<String>,
 ) -> Result<HddCreateResult> {
     let input = CreateItemInput {
+        embedding: None,
         title: title.to_string(),
         item_type: ItemType::Literature,
         priority: Some("medium".to_string()),
@@ -950,6 +956,7 @@ mod tests {
         let (mut store, rels) = setup();
         // Create hypothesis without paper link (directly via CRUD)
         let input = CreateItemInput {
+            embedding: None,
             title: "Orphan Hyp".into(),
             item_type: ItemType::Hypothesis,
             priority: None,
@@ -969,6 +976,7 @@ mod tests {
     fn test_validate_catches_orphan_experiment() {
         let (mut store, rels) = setup();
         let input = CreateItemInput {
+            embedding: None,
             title: "Orphan Expr".into(),
             item_type: ItemType::Experiment,
             priority: None,

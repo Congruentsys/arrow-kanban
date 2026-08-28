@@ -453,6 +453,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Test Item".into(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".into()),
@@ -789,6 +790,7 @@ mod tests {
         // Add more items
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Second Item".into(),
                 item_type: ItemType::Chore,
                 priority: None,

@@ -28,10 +28,15 @@ serde_json = "1"
 sha2 = "0.10"
 async-nats = { version = "0.38", optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
+fastembed = { version = "6", optional = true, default-features = false, features = ["ort-download-binaries-native-tls", "hf-hub-native-tls"] }
 
 [features]
 default = []
 client = ["dep:async-nats", "dep:tokio"]
+# Real neural embeddings (fastembed-rs, ONNX). Off by default so `cargo build`/`cargo test`
+# stay hermetic and never need network or a downloaded model — the built-in HashEmbedBackend
+# covers that path. Enable to get the shipped-default semantic backend named in EX-8693.
+fastembed-backend = ["dep:fastembed"]
 
 [dev-dependencies]
 tempfile = "3"
