@@ -10,6 +10,7 @@ use arrow_kanban::{CreateItemInput, ItemType, KanbanStore, export};
 
 fn probe_input() -> CreateItemInput {
     CreateItemInput {
+        embedding: None,
         title: "Time-to-orient probe".into(),
         item_type: ItemType::Chore,
         priority: None,

@@ -124,6 +124,7 @@ fn clock_at(cell: &Arc<AtomicU64>) -> impl Fn() -> u64 + Send + 'static {
 
 fn input() -> CreateItemInput {
     CreateItemInput {
+        embedding: None,
         title: "t".into(),
         item_type: ItemType::Chore,
         priority: None,

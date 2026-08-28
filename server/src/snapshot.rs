@@ -94,6 +94,7 @@ mod tests {
     fn seed(store: &mut KanbanStore, title: &str) -> String {
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: title.to_string(),
                 item_type: ItemType::Chore,
                 priority: None,

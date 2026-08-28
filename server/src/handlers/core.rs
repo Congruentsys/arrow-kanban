@@ -122,6 +122,7 @@ pub(crate) fn handle_create_typed(
     }
 
     let input = CreateItemInput {
+        embedding: None,
         title: req.title.clone(),
         item_type,
         priority: req.priority,
@@ -2077,6 +2078,7 @@ pub(crate) fn handle_hdd_create_typed(
         }
         _ => {
             let input = CreateItemInput {
+                embedding: None,
                 title: req.title.clone(),
                 item_type,
                 priority: None,
@@ -2209,6 +2211,7 @@ mod ratify_tests {
     fn item(store: &mut KanbanStore, ty: ItemType, tags: &[&str]) -> String {
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "r".into(),
                 item_type: ty,
                 priority: None,
@@ -2259,6 +2262,7 @@ mod claim_tests {
     fn new_item(store: &mut KanbanStore, title: &str) -> String {
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: title.into(),
                 item_type: ItemType::Expedition,
                 priority: None,
@@ -2452,6 +2456,7 @@ mod ch6742_tests {
     fn item_with_flat_depends(store: &mut KanbanStore, deps: &[&str]) -> String {
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "t".into(),
                 item_type: ItemType::Expedition,
                 priority: None,

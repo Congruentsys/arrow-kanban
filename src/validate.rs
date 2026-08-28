@@ -352,6 +352,7 @@ mod tests {
         let mut store = KanbanStore::new();
         let id = store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Test Item".to_string(),
                 item_type,
                 priority: priority.map(|s| s.to_string()),
@@ -656,6 +657,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "A".to_string(),
                 item_type: ItemType::Expedition,
                 priority: None,
@@ -668,6 +670,7 @@ mod tests {
             .unwrap();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "B".to_string(),
                 item_type: ItemType::Chore,
                 priority: Some("low".to_string()),
@@ -689,6 +692,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Good".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -750,6 +754,7 @@ mod tests {
         let mut store = KanbanStore::new();
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Good".to_string(),
                 item_type: ItemType::Expedition,
                 priority: Some("high".to_string()),
@@ -775,6 +780,7 @@ mod tests {
         // One bad item (no body, no priority)
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Bad".to_string(),
                 item_type: ItemType::Expedition,
                 priority: None,
@@ -788,6 +794,7 @@ mod tests {
         // One good item
         store
             .create_item(&CreateItemInput {
+                embedding: None,
                 title: "Good".to_string(),
                 item_type: ItemType::Chore,
                 priority: Some("low".to_string()),

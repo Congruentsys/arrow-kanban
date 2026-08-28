@@ -90,6 +90,13 @@ enum Commands {
         /// Push after creating (atomic create + commit + push)
         #[arg(long)]
         push: bool,
+        /// Skip computing a semantic embedding for this item
+        #[arg(long)]
+        no_embed: bool,
+        /// Embedding backend for this item: hash (default; offline) or
+        /// fastembed (needs `--features fastembed-backend`)
+        #[arg(long)]
+        embedding_provider: Option<String>,
     },
 
     /// Move an item to a new status
@@ -236,9 +243,34 @@ enum Commands {
         /// Limit results (default 20)
         #[arg(long, default_value = "20")]
         top: usize,
-        /// Embedding provider: hash (default), ollama, subprocess
+        /// Embedding provider for --semantic: hash (default; offline) or
+        /// fastembed (needs `--features fastembed-backend`)
         #[arg(long)]
         embedding_provider: Option<String>,
+        /// Semantic search: rank by cosine similarity over the stored
+        /// `embedding` column instead of text/substring matching.
+        /// Composes with structural filters the same way `search` does
+        /// (e.g. "chore" in the query narrows by type before ranking).
+        #[arg(long)]
+        semantic: Option<String>,
+        /// Minimum cosine similarity for --semantic (default -1.0, i.e. no floor)
+        #[arg(long, allow_hyphen_values = true, default_value = "-1.0")]
+        threshold: f32,
+    },
+
+    /// Backfill the `embedding` column for items that don't have
+    /// one — items created before this feature shipped, created with
+    /// `--no-embed`, or created via the NATS server path (which does not
+    /// yet auto-populate embeddings; see `Commands::Create`).
+    Embed {
+        /// Embedding backend: hash (default; offline) or fastembed (needs
+        /// `--features fastembed-backend`)
+        #[arg(long)]
+        embedding_provider: Option<String>,
+        /// Re-embed every item, including ones that already have an
+        /// embedding (e.g. after switching providers)
+        #[arg(long)]
+        all: bool,
     },
 
     /// Show board statistics
@@ -971,6 +1003,8 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
             template,
             relate,
             push,
+            no_embed,
+            embedding_provider,
         } => {
             let it = ItemType::from_str_loose(&item_type)
                 .ok_or_else(|| format!("Unknown item type: {item_type}"))?;
@@ -1014,7 +1048,28 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                 }
             }
 
+            // Semantic embedding (issue #104) — computed here, at write
+            // time, by the CLI layer: KanbanStore itself stays ML-agnostic
+            // (the "engine stays generic" constraint), so the backend is
+            // resolved and invoked here and only a plain Vec<f32> crosses
+            // into CreateItemInput.
+            let embedding = if no_embed {
+                None
+            } else {
+                let text = format!("{title}\n\n{}", body_content.as_deref().unwrap_or(""));
+                match arrow_kanban::embedding::backend_by_name(embedding_provider.as_deref())
+                    .and_then(|b| b.embed(&text))
+                {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        eprintln!("  Warning: embedding skipped ({e})");
+                        None
+                    }
+                }
+            };
+
             let id = store.create_item(&CreateItemInput {
+                embedding,
                 title: title.clone(),
                 item_type: it,
                 priority,
@@ -1460,7 +1515,32 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
             no_semantic,
             top,
             embedding_provider,
+            semantic,
+            threshold,
         } => {
+            // Handle --semantic flag (issue #104: real cosine-similarity
+            // ranking over the stored `embedding` column, hybrid with
+            // structural filters the same way --search decomposes them).
+            if let Some(ref semantic_query_text) = semantic {
+                let backend =
+                    arrow_kanban::embedding::backend_by_name(embedding_provider.as_deref())?;
+                let query_embedding = backend.embed(semantic_query_text)?;
+                let all = store.query_items(None, None, None, None);
+                let results = arrow_kanban::semantic::semantic_query(
+                    &all,
+                    semantic_query_text,
+                    &query_embedding,
+                    top,
+                    threshold,
+                );
+                if json {
+                    print!("{}", query::format_ranked_results_json(&results));
+                } else {
+                    print!("{}", query::format_ranked_results(&results));
+                }
+                return Ok(());
+            }
+
             // Handle --search flag (semantic search with substring fallback)
             if let Some(ref search_text) = search {
                 let all = store.query_items(None, None, None, None);
@@ -1670,6 +1750,83 @@ fn run(root: PathBuf, command: Commands) -> Result<(), Box<dyn std::error::Error
                     };
                 print!("{}", display::format_item_table(&text_filtered));
             }
+        }
+
+        Commands::Embed {
+            embedding_provider,
+            all,
+        } => {
+            let backend = arrow_kanban::embedding::backend_by_name(embedding_provider.as_deref())?;
+            let batches = store.query_items(None, None, None, None);
+
+            let mut targets: Vec<(String, String)> = Vec::new(); // (id, text)
+            for batch in &batches {
+                let ids = batch
+                    .column(arrow_kanban::schema::items_col::ID)
+                    .as_any()
+                    .downcast_ref::<arrow::array::StringArray>()
+                    .expect("id");
+                let titles = batch
+                    .column(arrow_kanban::schema::items_col::TITLE)
+                    .as_any()
+                    .downcast_ref::<arrow::array::StringArray>()
+                    .expect("title");
+                let bodies = batch
+                    .column(arrow_kanban::schema::items_col::BODY)
+                    .as_any()
+                    .downcast_ref::<arrow::array::StringArray>()
+                    .expect("body");
+                let embeddings = batch
+                    .column(arrow_kanban::schema::items_col::EMBEDDING)
+                    .as_any()
+                    .downcast_ref::<arrow::array::FixedSizeListArray>()
+                    .expect("embedding");
+
+                for i in 0..batch.num_rows() {
+                    if !all && !embeddings.is_null(i) {
+                        continue;
+                    }
+                    let body_text = if bodies.is_null(i) {
+                        ""
+                    } else {
+                        bodies.value(i)
+                    };
+                    let text = format!("{}\n\n{body_text}", titles.value(i));
+                    targets.push((ids.value(i).to_string(), text));
+                }
+            }
+
+            println!(
+                "Embedding {} item(s) with backend '{}'{}...",
+                targets.len(),
+                backend.name(),
+                if all {
+                    " (--all: re-embedding every item)"
+                } else {
+                    ""
+                }
+            );
+            let mut failed = 0usize;
+            for (id, text) in &targets {
+                match backend.embed(text) {
+                    Ok(v) => {
+                        if let Err(e) = store.update_embedding(id, Some(v)) {
+                            eprintln!("  {id}: failed to store embedding: {e}");
+                            failed += 1;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  {id}: embedding failed: {e}");
+                        failed += 1;
+                    }
+                }
+            }
+            save_store_noting(&root, &store)?;
+            println!(
+                "Embedded {}/{} item(s).",
+                targets.len() - failed,
+                targets.len()
+            );
         }
 
         Commands::Stats {
@@ -2775,6 +2932,30 @@ fn run_client(server_url: &str, command: &Commands) -> Result<(), Box<dyn std::e
         );
     }
 
+    // --semantic has no server-side handler yet — the embedding column and
+    // cosine search are engine-local capabilities so far
+    // (`arrow_kanban::semantic`), not exposed over the NATS wire protocol.
+    // Refuse loudly rather than silently falling back to substring search,
+    // which would look like it worked and rank nothing semantically.
+    if let Commands::Query {
+        semantic: Some(_), ..
+    } = command
+    {
+        return Err("query --semantic is not yet supported in --server mode \
+             (shipped as an engine-local path; server exposure is a follow-on). \
+             Run without --server against a local .arrow-kanban/ checkout."
+            .into());
+    }
+    // Same story for the backfill command: nothing on the server side owns a
+    // shared embedding backend instance yet (that needs engine-startup
+    // plumbing, not just a CLI flag), so refuse rather than silently no-op.
+    if let Commands::Embed { .. } = command {
+        return Err("embed is not yet supported in --server mode \
+             (shipped as an engine-local path; server exposure is a follow-on). \
+             Run without --server against a local .arrow-kanban/ checkout."
+            .into());
+    }
+
     let (cmd, payload) = command_to_nats(command);
     let response = client.request(&cmd, &payload)?;
 
@@ -2929,6 +3110,14 @@ fn command_to_nats(command: &Commands) -> (String, serde_json::Value) {
             template,
             relate,
             push: _,
+            // NATS/server-mode item creation does not yet auto-populate
+            // `embedding` — that needs a shared backend instance wired into
+            // the server's engine startup, scoped out of the local CLI path
+            // this shipped (`arrow-kanban embed --all` backfills
+            // server-created items after the fact). Tracked as a follow-on,
+            // not silently dropped.
+            no_embed: _,
+            embedding_provider: _,
         } => {
             let tag_list: Vec<String> = tags
                 .as_deref()
@@ -3033,6 +3222,10 @@ fn command_to_nats(command: &Commands) -> (String, serde_json::Value) {
             no_semantic: _,
             top,
             embedding_provider,
+            // Refused before reaching this function (see the guard in
+            // `run_client`) — --semantic has no NATS-mode handler yet.
+            semantic: _,
+            threshold: _,
         } => {
             let mut payload = serde_json::json!({ "query": words.join(" ") });
             if let Some(s) = search {
@@ -3261,6 +3454,9 @@ fn command_to_nats(command: &Commands) -> (String, serde_json::Value) {
         ),
         Commands::MaterializeItem { .. } | Commands::Backup { .. } | Commands::Restore { .. } => {
             unreachable!("MaterializeItem/Config/Backup/Restore intercepted before NATS dispatch")
+        }
+        Commands::Embed { .. } => {
+            unreachable!("Embed intercepted before NATS dispatch (no server handler yet)")
         }
     }
 }
