@@ -206,6 +206,46 @@ render();
 </script>"""
 
 
+def _embed_json(obj):
+    """JSON for embedding inside a <script> block.
+
+    json.dumps does NOT escape `<`, so an ordinary item title containing
+    `</script>` ends the script block at the HTML tokenizer — before the array
+    is complete. The DATA array becomes a syntax error, the table never
+    renders, and the remaining JSON is painted onto the page as text. With a
+    chosen title rather than an accidental one it is script injection.
+
+    Reproduced with the title `fix the </script> handling in render.js`, which
+    is the kind of item this fleet files every week.
+
+    esc() below is a correct escaper and is NOT the fix: it runs inside the
+    script, after the parser has already terminated the block. The unsafe step
+    is the embedding, one layer earlier.
+
+    `<` inside a JSON string parses back to `<`, so nothing downstream changes.
+    """
+    return (json.dumps(obj)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026"))
+
+
+def _csv_cell(v):
+    """Neutralise spreadsheet formula injection in a CSV cell.
+
+    Excel and Google Sheets EVALUATE a cell beginning `=`, `+`, `-`, `@`, tab
+    or CR when the file is opened, and item titles are accident-controlled the
+    same way the HTML path is. A CSV is explicitly a thing you open in a
+    spreadsheet, so the export is the whole attack surface.
+
+    Prefixing with an apostrophe is the standard neutralisation: spreadsheets
+    read the cell as text, and a plain reader (csv, pandas) sees one leading
+    quote rather than a formula.
+    """
+    t = "" if v is None else str(v)
+    return "'" + t if t[:1] in ("=", "+", "-", "@", "\t", "\r") else t
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("export_json")
@@ -221,9 +261,10 @@ def main():
         w.writerow(["rank", "campaign", "id", "parent", "type", "status", "priority",
                     "assignee", "depends_on", "tags", "title", "notes"])
         for r in rows:
-            w.writerow([r["rank"], r["camp"], r["id"], r["parent"], r["type"], r["status"],
-                        r["priority"], r["assignee"], " ".join(r["depends_on"]),
-                        " ".join(r["tags"]), r["title"][:160], ""])
+            w.writerow([_csv_cell(c) for c in
+                        [r["rank"], r["camp"], r["id"], r["parent"], r["type"], r["status"],
+                         r["priority"], r["assignee"], " ".join(r["depends_on"]),
+                         " ".join(r["tags"]), r["title"][:160], ""]])
 
     counts = Counter(r["camp"] for r in rows)
     crit = Counter(r["camp"] for r in rows if r["priority"] == "critical")
@@ -238,7 +279,7 @@ def main():
                   f'<span class="rkmeta">{counts[c]} open · {crit[c]} crit</span></button>')
 
     page = (CSS_JS_PAGE.replace("__TITLE__", html.escape(a.title))
-            .replace("__STRIP__", strip).replace("__DATA__", json.dumps(
+            .replace("__STRIP__", strip).replace("__DATA__", _embed_json(
                 [{k: r[k] for k in ("rank", "camp", "id", "parent", "type", "status",
                                     "priority", "depends_on", "tags", "title", "child")} for r in rows])))
     open(f"{a.out_dir}/board.html", "w").write(page)
