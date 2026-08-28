@@ -435,7 +435,7 @@ mod tests {
         assert!(combined_series_type("expedition"));
         assert!(!combined_series_type("voyage"));
         assert!(!combined_series_type("campaign"));
-        // hazard/signal were dead terms in the old three-clause boolean (CH-8304) —
+        // hazard/signal were dead terms in the old three-clause boolean —
         // pin that they were never, and are still not, part of the combined series.
         assert!(!combined_series_type("hazard"));
         assert!(!combined_series_type("signal"));

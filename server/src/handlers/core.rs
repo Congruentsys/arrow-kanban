@@ -1439,7 +1439,7 @@ pub(crate) fn handle_flow_typed(
     let items = flow::flow_items(store);
     let trans = flow::transitions(store);
     // Read from the one source (state_machine::TERMINAL_STATES) rather than
-    // re-hardcoding — the drift surface flagged in CH-8304.
+    // re-hardcoding — the drift surface this change closes.
     let terminal: std::collections::BTreeSet<String> = arrow_kanban::state_machine::TERMINAL_STATES
         .iter()
         .map(|s| s.to_string())
@@ -1480,7 +1480,7 @@ pub(crate) fn handle_flow_typed(
 
 #[cfg(test)]
 mod flow_terminal_tests {
-    //! CH-8304: handle_flow_typed's terminal set must be READ from
+    //! handle_flow_typed's terminal set must be READ from
     //! state_machine::TERMINAL_STATES, never re-hardcoded — a hardcoded copy
     //! that drifts from the one source silently misclassifies items.
     use super::*;
