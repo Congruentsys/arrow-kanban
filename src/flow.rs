@@ -160,11 +160,7 @@ pub fn status_series(
 /// The ruled combined series: chore + expedition as ONE (type usage has
 /// drifted; segmenting by a drifted dimension reports noise as signal).
 pub fn combined_series_type(item_type: &str) -> bool {
-    matches!(
-        item_type.to_lowercase().as_str(),
-        "chore" | "expedition" | "hazard" | "signal"
-    ) == matches!(item_type.to_lowercase().as_str(), "chore" | "expedition")
-        && matches!(item_type.to_lowercase().as_str(), "chore" | "expedition")
+    matches!(item_type.to_lowercase().as_str(), "chore" | "expedition")
 }
 
 // ── Phase 2: WIP vs limits ───────────────────────────────────────────────────
@@ -439,6 +435,10 @@ mod tests {
         assert!(combined_series_type("expedition"));
         assert!(!combined_series_type("voyage"));
         assert!(!combined_series_type("campaign"));
+        // hazard/signal were dead terms in the old three-clause boolean —
+        // pin that they were never, and are still not, part of the combined series.
+        assert!(!combined_series_type("hazard"));
+        assert!(!combined_series_type("signal"));
         let trans = vec![
             t("CH-1", None, "backlog", 1_000, false),
             t("VY-9", None, "backlog", 1_000, false),

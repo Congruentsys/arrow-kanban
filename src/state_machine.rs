@@ -289,8 +289,9 @@ const VALID_RESOLUTIONS: &[&str] = &[
     "refuted",
 ];
 
-/// Terminal states where resolution can be set.
-const TERMINAL_STATES: &[&str] = &["done", "complete", "abandoned", "retired"];
+/// Terminal states where resolution can be set — the one source other modules
+/// (e.g. `flow::handle_flow_typed`) must read from rather than re-hardcoding.
+pub const TERMINAL_STATES: &[&str] = &["done", "complete", "abandoned", "retired"];
 
 /// Validate a resolution value. Returns Ok if valid or None.
 pub fn validate_resolution(resolution: Option<&str>, target_status: &str) -> Result<()> {
