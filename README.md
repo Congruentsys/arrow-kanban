@@ -49,7 +49,7 @@ consumer's job — which is exactly why the engine is generic. See
 cargo install --path .
 
 # Or from git
-cargo install --git https://github.com/hankh95/arrow-kanban
+cargo install --git https://github.com/Congruentsys/arrow-kanban
 ```
 
 Requires a Rust toolchain supporting **edition 2024** (Rust 1.85 or newer). This installs the
