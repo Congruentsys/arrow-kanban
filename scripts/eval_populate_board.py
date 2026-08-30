@@ -7,7 +7,7 @@ Usage:
   python3 scripts/eval_populate_board.py <hash|fastembed> [board-root]
 
 Requires the `gh` CLI, authenticated against a repo with read access to the
-issue list (defaults to the upstream github.com/hankh95/arrow-kanban).
+issue list (defaults to the upstream github.com/Congruentsys/arrow-kanban).
 """
 
 import json
@@ -16,7 +16,7 @@ import re
 import subprocess
 import sys
 
-REPO = os.environ.get("EVAL_REPO", "hankh95/arrow-kanban")
+REPO = os.environ.get("EVAL_REPO", "Congruentsys/arrow-kanban")
 BIN = os.environ.get(
     "ARROW_KANBAN_BIN",
     os.path.join(os.path.dirname(__file__), "..", "target", "release", "arrow-kanban"),
