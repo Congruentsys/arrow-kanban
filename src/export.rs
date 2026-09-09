@@ -73,7 +73,7 @@ pub fn export_board_index(
     item_type_filter: Option<&str>,
 ) -> String {
     let mut lines = Vec::new();
-    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M");
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC");
 
     lines.push(format!(
         "# {} Board",

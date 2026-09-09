@@ -205,7 +205,7 @@ pub fn format_item_detail(batch: &RecordBatch) -> String {
         {
             let ts = updated.value(0);
             let dt = chrono::DateTime::from_timestamp_millis(ts)
-                .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+                .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
                 .unwrap_or_default();
             lines.push(format!("  Updated    {dt}"));
         }

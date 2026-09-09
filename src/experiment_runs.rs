@@ -281,7 +281,7 @@ pub fn format_runs(runs: &[ExperimentRun]) -> String {
 
     for run in runs {
         let started = chrono::DateTime::from_timestamp_millis(run.started_at)
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
             .unwrap_or_else(|| "?".to_string());
 
         let results = run
