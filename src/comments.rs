@@ -305,7 +305,7 @@ pub fn format_comments(comments: &[Comment]) -> String {
     for c in comments {
         let resolved_tag = if c.resolved { " [resolved]" } else { "" };
         let date = chrono::DateTime::from_timestamp_millis(c.created_at_ms)
-            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+            .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
             .unwrap_or_default();
 
         let indent = if c.parent_comment_id.is_some() {
