@@ -16,14 +16,24 @@ use std::path::Path;
 /// chrono format strings that render a date+time and stop before naming a zone.
 const ZONELESS: [&str; 2] = ["%Y-%m-%d %H:%M\"", "%Y-%m-%d %H:%M:%S\""];
 
+/// Only a RENDER site is a finding. The identical literal inside `parse_from_str` is a PARSER,
+/// and appending ` UTC` there would break the parse — so a bare needle match would hand the
+/// next reader advice that makes things worse. `src/migrate.rs` and `src/stats.rs` already hold
+/// such parses; they escape today only by using a `T` separator or being date-only, which is
+/// luck, not a property. Requiring `.format(` matches the thing we actually care about.
+const RENDER_CALL: &str = ".format(";
+
 #[test]
 fn every_rendered_timestamp_names_its_zone() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut offenders = Vec::new();
 
-    let mut stack = vec![src];
+    // `server/` is a workspace member that renders these same strings to the wire
+    // (`server/src/handlers/`), so a scan of `src/` alone cannot catch the next renderer.
+    let mut stack: Vec<std::path::PathBuf> = vec![root.join("src"), root.join("server").join("src")];
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read_dir src") {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries {
             let path = entry.expect("dir entry").path();
             if path.is_dir() {
                 stack.push(path);
@@ -39,7 +49,7 @@ fn every_rendered_timestamp_names_its_zone() {
             let text = std::fs::read_to_string(&path).expect("read source");
             for (i, line) in text.lines().enumerate() {
                 for needle in ZONELESS {
-                    if line.contains(needle) {
+                    if line.contains(needle) && line.contains(RENDER_CALL) {
                         offenders.push(format!(
                             "{}:{}: {}",
                             path.file_name().and_then(|n| n.to_str()).unwrap_or("?"),
