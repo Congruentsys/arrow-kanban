@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Every rendered timestamp names its zone.
 //!
 //! The store keeps epoch-millis and every renderer formats UTC, but four call sites printed
@@ -30,9 +31,12 @@ fn every_rendered_timestamp_names_its_zone() {
 
     // `server/` is a workspace member that renders these same strings to the wire
     // (`server/src/handlers/`), so a scan of `src/` alone cannot catch the next renderer.
-    let mut stack: Vec<std::path::PathBuf> = vec![root.join("src"), root.join("server").join("src")];
+    let mut stack: Vec<std::path::PathBuf> =
+        vec![root.join("src"), root.join("server").join("src")];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries {
             let path = entry.expect("dir entry").path();
             if path.is_dir() {
