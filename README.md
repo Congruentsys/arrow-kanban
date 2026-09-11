@@ -29,6 +29,11 @@ A kanban CRUD is not interesting. These are the things this engine does that mos
   `measures`, `partOf`, … so you can ask *which experiment validates this hypothesis?* without
   parsing prose — while the flat dependency columns planning views need are kept as a projection
   of the same edges.
+- **Semantic search over the board, with no service to run.** Every item carries a
+  384-dimension `embedding` column resident in the same Arrow batch, searched by brute-force
+  SIMD cosine — sub-millisecond at kanban scale, so there is no ANN index and no vector
+  database. The default backend is offline and dependency-free; neural embeddings are an
+  opt-in build feature ([Semantic search](#semantic-search-optional)).
 - **Three deployment shapes, one semantics.** Local, NATS server, and in-process embedding share
   identical core behaviour, and that is not a claim — it is
   [conformance fixtures](#conformance-fixtures--run-them-against-your-own-integration) you can
@@ -94,6 +99,83 @@ Highlights:
 | `migrate` | Import markdown files (with turtle frontmatter) into the store |
 | `backup` / `restore` | Snapshot and restore the Arrow store |
 | `templates` / `boards` / `next-id` / `rank` / `next` | Utilities |
+
+## Two boards: development and research
+
+A store holds more than one board, and they are not cosmetic variants — each has its own item
+types, its own lifecycles, and its own validation. `boards` lists them; `--board <name>` selects
+one.
+
+| | **development** | **research** |
+|---|---|---|
+| preset | `nautical` / `software` | `hdd` |
+| item types | chore, expedition, voyage, campaign, hazard, signal | paper, hypothesis, experiment, measure, idea, literature |
+| states | `backlog → in_progress → review → done` | twelve, and **per-type** — see below |
+| answers | *what are we building, and what blocks it?* | *what do we believe, and what would settle it?* |
+
+The research board's states are **per item type**, because a paper and an experiment do not
+have the same life:
+
+    hypothesis   draft → active → retired
+    measure      draft → active → retired
+    experiment   planned → running → complete → abandoned
+    paper        draft → outline → writing → review → complete → abandoned
+    literature   draft → active → complete
+    idea         captured → …
+
+A move is validated against the type's own lifecycle, so `experiment → writing` is refused
+rather than silently accepted: an experiment has no writing stage.
+
+## Hypothesis-driven development (HDD)
+
+The research board exists so a claim and its evidence are **linked data rather than prose**. The
+shape is four types and the typed edges between them:
+
+    paper ──hasHypothesis──▶ hypothesis ──validates──▶ experiment ──measures──▶ measure
+                                  ▲                         │
+                                  └──────── run ───────────┘
+
+Because those edges are typed and directional, *"which experiment validates this hypothesis?"*
+and *"which measure did it move?"* are graph queries, not a grep through comments.
+
+### The process
+
+```bash
+# 0. Initialize a store whose board vocabulary is the research preset
+arrow-kanban init --theme hdd
+
+# 1. A paper is the container for a line of enquiry
+arrow-kanban hdd paper "Semantic retrieval over columnar item stores"
+
+# 2. A hypothesis states what you believe, and belongs to a paper
+arrow-kanban hdd hypothesis "Cosine over a resident column beats lexical at k=5" --paper 1
+
+# 3. An experiment is what would settle it, and belongs to a hypothesis
+arrow-kanban hdd experiment "12 hand-labelled queries over 49 real items" --hypothesis H1.1
+
+# 4. A measure is the number the experiment moves
+arrow-kanban hdd measure "recall@5" --experiment EXP-1
+
+# 5. Run it — each run is recorded, so a result is never a bare assertion
+arrow-kanban hdd run EXP-1 --agent alice
+arrow-kanban hdd status EXP-1
+arrow-kanban hdd complete EXP-1 --run 1 --results '{"recall_at_5": 1.0}'
+
+# 6. Read the whole chain back, and check it hangs together
+arrow-kanban hdd registry      # paper → hypothesis → experiment → measure
+arrow-kanban hdd validate      # integrity: orphans, unmeasured hypotheses, broken edges
+```
+
+`hdd validate` is the part worth running in CI. A hypothesis with no experiment, or an
+experiment with no measure, is a claim nobody can settle — and it is exactly the shape that
+survives code review when it lives in prose.
+
+### Why a board rather than a notebook
+
+A notebook records what you did. This records **what would change your mind, before you look** —
+the hypothesis and its measure exist as rows before the experiment runs, so a result cannot be
+retrofitted to a claim invented after the fact. `hdd run` / `complete` keeps every run, not the
+flattering one.
 
 ## Semantic search (optional)
 
@@ -202,7 +284,7 @@ how many you have:**
 Both rows are measured, not extrapolated:
 
 ```sh
-python3 -c "import pyarrow.parquet as pq, os; f='.nusy-kanban/items.parquet'; \
+python3 -c "import pyarrow.parquet as pq, os; f='.arrow-kanban/items.parquet'; \
 n=pq.read_table(f).num_rows; b=os.path.getsize(f); print(n, b, b/n)"
 ```
 
