@@ -123,21 +123,43 @@ arrow-kanban query --semantic "flaky login" --embedding-provider fastembed
 # --no-embed, or came in through the NATS server path (which does not yet
 # auto-populate embeddings — see "Known issues").
 arrow-kanban embed --embedding-provider fastembed
+
+# Same model on candle (pure Rust, FP32). CUDA is meant for bulk (re-)embedding
+# on an NVIDIA GPU. It needs a CUDA toolchain with nvcc; on aarch64 Linux also
+# set RUSTFLAGS="-C target-feature=+fp16".
+cargo build --release --features candle-backend,candle-transformers/cuda
+arrow-kanban embed --all --embedding-provider candle-cuda
 ```
+
+**Which backend.** A bake-off on real board text kept `fastembed` (int8) as the default: it has
+the lowest per-write cost of the CPU backends (274 ms for cold load plus one embedding, against
+488 ms for `fastembed-fp32` and 1,665 ms for `candle` on CPU), and all four backends scored the same
+retrieval quality. `candle-cuda` measured 3.1x fastembed's throughput at batch 64 and 256, so it
+ships as the opt-in path for bulk embedding. `candle` on CPU works but is slow. Method, the full
+table, confounds, and the reproduce commands are in
+[docs/embedding-bakeoff.md](docs/embedding-bakeoff.md).
 
 `--semantic` composes with the same structural-filter decomposition `query`'s NL mode uses —
 `arrow-kanban query --semantic "chore flaky login"` narrows to `item_type=chore` before
 ranking the rest by cosine similarity, same as plain `query` does for `search`.
 
-**Offline path.** `fastembed-backend` downloads its model from the Hugging Face hub on first
-use and caches it under `$HOME/.cache/huggingface` (`HF_HOME` overrides). For a fully offline
-deployment, pre-populate that cache once (with network) and point `HF_HOME` at it thereafter —
-no model file is vendored into this repository.
+**Offline path.** Both neural backends download their model from the Hugging Face hub on first
+use, and no model file is vendored into this repository.
 
-A query embedding must come from the **same backend** that wrote the stored column, or the
-cosine scores are meaningless — mixing `hash`-embedded items with a `fastembed` query (or vice
-versa) silently produces low-quality results rather than an error, since both are valid
-384-dimension vectors. `arrow-kanban embed --all --embedding-provider <name>` re-embeds a whole
+- `fastembed` caches under `.fastembed_cache` in the working directory. `FASTEMBED_CACHE_DIR`
+  overrides that location, and `HF_HOME` takes precedence over both.
+- `candle` caches under `$HF_HOME/hub`, which defaults to `~/.cache/huggingface/hub`.
+
+A cached file is read without touching the network. For a fully offline deployment, populate the
+cache once on a machine with network access, then point `HF_HOME` at that copy.
+
+A query embedding must come from a **compatible backend**, or the cosine scores are meaningless.
+Mixing `hash`-embedded items with a neural query (or vice versa) silently produces low-quality
+results, not an error, because both are valid 384-dimension vectors.
+
+The three FP32 backends (`fastembed-fp32`, `candle`, `candle-cuda`) produced identical vectors in
+the bake-off, so they are interchangeable on one board. The int8 `fastembed` differs slightly
+from them, so re-embed after switching between int8 and FP32. `arrow-kanban embed --all --embedding-provider <name>` re-embeds a whole
 board after switching backends.
 
 ## NATS multi-agent mode (optional)

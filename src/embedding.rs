@@ -103,9 +103,10 @@ fn l2_normalize(v: &mut [f32]) {
 /// Real neural embeddings via fastembed-rs (ONNX Runtime) — the shipped
 /// default backend (issue #104), active when built with
 /// `--features fastembed-backend`. Not vendored: the model downloads from
-/// the Hugging Face hub on first use and is cached under
-/// `$HOME/.cache/huggingface` (`HF_HOME` overrides) — point that at a
-/// pre-populated cache for a fully offline run; see README "Offline path".
+/// the Hugging Face hub on first use and is cached under `.fastembed_cache`
+/// in the working directory (`FASTEMBED_CACHE_DIR` overrides it, `HF_HOME`
+/// overrides both) — point that at a pre-populated cache for a fully offline
+/// run; see README "Offline path".
 #[cfg(feature = "fastembed-backend")]
 pub struct FastEmbedBackend {
     model: std::sync::Mutex<fastembed::TextEmbedding>,
@@ -115,11 +116,10 @@ pub struct FastEmbedBackend {
 #[cfg(feature = "fastembed-backend")]
 impl FastEmbedBackend {
     /// `AllMiniLML6V2Q` — a small (int8-quantized, ~25 MB download), 384-dim
-    /// sentence-transformer. Chosen for CPU-only inference: comparing this
-    /// backend against a GPU (candle) path needs a GPU to measure, so that
-    /// bake-off is a separate, deferred follow-on — this ships the CPU-viable
-    /// half of the trait's default. The whole point of an ONNX default is
-    /// that it does not need a GPU to be useful.
+    /// sentence-transformer, and the default because it needs no GPU to be
+    /// useful. The embedding-backend bake-off (`docs/embedding-bakeoff.md`)
+    /// kept it as the default: the lowest per-write cost of the CPU backends,
+    /// with the same retrieval quality as the FP32 variants.
     pub fn try_new() -> Result<Self> {
         Self::try_with_model(
             fastembed::EmbeddingModel::AllMiniLML6V2Q,
