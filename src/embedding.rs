@@ -103,28 +103,48 @@ fn l2_normalize(v: &mut [f32]) {
 /// Real neural embeddings via fastembed-rs (ONNX Runtime) — the shipped
 /// default backend (issue #104), active when built with
 /// `--features fastembed-backend`. Not vendored: the model downloads from
-/// the Hugging Face hub on first use and is cached under
-/// `$HOME/.cache/huggingface` (`HF_HOME` overrides) — point that at a
-/// pre-populated cache for a fully offline run; see README "Offline path".
+/// the Hugging Face hub on first use and is cached under `.fastembed_cache`
+/// in the working directory (`FASTEMBED_CACHE_DIR` overrides it, `HF_HOME`
+/// overrides both) — point that at a pre-populated cache for a fully offline
+/// run; see README "Offline path".
 #[cfg(feature = "fastembed-backend")]
 pub struct FastEmbedBackend {
     model: std::sync::Mutex<fastembed::TextEmbedding>,
+    name: &'static str,
 }
 
 #[cfg(feature = "fastembed-backend")]
 impl FastEmbedBackend {
     /// `AllMiniLML6V2Q` — a small (int8-quantized, ~25 MB download), 384-dim
-    /// sentence-transformer. Chosen for CPU-only inference: comparing this
-    /// backend against a GPU (candle) path needs a GPU to measure, so that
-    /// bake-off is a separate, deferred follow-on — this ships the CPU-viable
-    /// half of the trait's default. The whole point of an ONNX default is
-    /// that it does not need a GPU to be useful.
+    /// sentence-transformer, and the default because it needs no GPU to be
+    /// useful. The embedding-backend bake-off (`docs/embedding-bakeoff.md`)
+    /// kept it as the default: the lowest per-write cost of the CPU backends,
+    /// with the same retrieval quality as the FP32 variants.
     pub fn try_new() -> Result<Self> {
-        let options = fastembed::TextInitOptions::new(fastembed::EmbeddingModel::AllMiniLML6V2Q);
+        Self::try_with_model(
+            fastembed::EmbeddingModel::AllMiniLML6V2Q,
+            "fastembed:AllMiniLML6V2Q",
+        )
+    }
+
+    /// `AllMiniLML6V2` — the same model without quantization (FP32, ~90 MB
+    /// download), selected with `--embedding-provider fastembed-fp32`. It lets
+    /// a comparison against another FP32 runtime separate the effect of
+    /// quantization from the effect of the runtime (`docs/embedding-bakeoff.md`).
+    pub fn try_new_fp32() -> Result<Self> {
+        Self::try_with_model(
+            fastembed::EmbeddingModel::AllMiniLML6V2,
+            "fastembed:AllMiniLML6V2",
+        )
+    }
+
+    fn try_with_model(model: fastembed::EmbeddingModel, name: &'static str) -> Result<Self> {
+        let options = fastembed::TextInitOptions::new(model);
         let model = fastembed::TextEmbedding::try_new(options)
             .map_err(|e| EmbedError::Backend(e.to_string()))?;
         Ok(Self {
             model: std::sync::Mutex::new(model),
+            name,
         })
     }
 }
@@ -142,9 +162,20 @@ impl EmbeddingBackend for FastEmbedBackend {
     }
 
     fn name(&self) -> &'static str {
-        "fastembed:AllMiniLML6V2Q"
+        self.name
     }
 }
+
+/// Pure-Rust neural embeddings via candle, CPU or CUDA — active when built
+/// with `--features candle-backend`. See the module docs for devices and the
+/// offline path.
+#[cfg(feature = "candle-backend")]
+pub mod candle;
+#[cfg(feature = "candle-backend")]
+pub use candle::{CandleBackend, CandleDevice};
+
+/// Every name [`backend_by_name`] resolves, whether or not it is compiled in.
+const KNOWN_PROVIDERS: &str = "hash, fastembed, fastembed-fp32, candle, candle-cuda";
 
 /// The backend `arrow-kanban` uses when none is explicitly selected —
 /// fastembed-rs ONNX when compiled in (the shipped default, issue #104),
@@ -169,13 +200,22 @@ pub fn backend_by_name(name: Option<&str>) -> Result<Box<dyn EmbeddingBackend>> 
         Some("hash") => Ok(Box::new(HashEmbedBackend)),
         #[cfg(feature = "fastembed-backend")]
         Some("fastembed") => Ok(Box::new(FastEmbedBackend::try_new()?)),
+        #[cfg(feature = "fastembed-backend")]
+        Some("fastembed-fp32") => Ok(Box::new(FastEmbedBackend::try_new_fp32()?)),
         #[cfg(not(feature = "fastembed-backend"))]
-        Some("fastembed") => Err(EmbedError::Backend(
-            "fastembed backend not compiled in — rebuild with `--features fastembed-backend`"
-                .to_string(),
-        )),
+        Some(provider @ ("fastembed" | "fastembed-fp32")) => Err(EmbedError::Backend(format!(
+            "{provider} backend not compiled in — rebuild with `--features fastembed-backend`"
+        ))),
+        #[cfg(feature = "candle-backend")]
+        Some("candle") => Ok(Box::new(CandleBackend::try_new(CandleDevice::Cpu)?)),
+        #[cfg(feature = "candle-backend")]
+        Some("candle-cuda") => Ok(Box::new(CandleBackend::try_new(CandleDevice::Cuda(0))?)),
+        #[cfg(not(feature = "candle-backend"))]
+        Some(provider @ ("candle" | "candle-cuda")) => Err(EmbedError::Backend(format!(
+            "{provider} backend not compiled in — rebuild with `--features candle-backend`"
+        ))),
         Some(other) => Err(EmbedError::Backend(format!(
-            "unknown embedding provider '{other}' (known: hash, fastembed)"
+            "unknown embedding provider '{other}' (known: {KNOWN_PROVIDERS})"
         ))),
     }
 }
@@ -265,5 +305,64 @@ mod tests {
     #[test]
     fn backend_by_name_rejects_unknown_provider() {
         assert!(backend_by_name(Some("carrier-pigeon")).is_err());
+    }
+
+    #[test]
+    fn unknown_provider_error_lists_every_known_provider() {
+        let err = backend_by_name(Some("carrier-pigeon"))
+            .err()
+            .expect("an unknown provider must be refused")
+            .to_string();
+        for known in [
+            "hash",
+            "fastembed-fp32",
+            "candle-cuda",
+            "candle,",
+            "fastembed,",
+        ] {
+            assert!(err.contains(known), "error should list '{known}': {err}");
+        }
+    }
+
+    #[cfg(not(feature = "fastembed-backend"))]
+    #[test]
+    fn fastembed_fp32_provider_names_the_missing_feature() {
+        let err = backend_by_name(Some("fastembed-fp32"))
+            .err()
+            .expect("not compiled in")
+            .to_string();
+        assert!(err.contains("fastembed-backend"), "{err}");
+    }
+
+    #[cfg(not(feature = "candle-backend"))]
+    #[test]
+    fn candle_providers_name_the_missing_feature() {
+        for name in ["candle", "candle-cuda"] {
+            let err = backend_by_name(Some(name))
+                .err()
+                .expect("not compiled in")
+                .to_string();
+            assert!(err.contains("candle-backend"), "{name}: {err}");
+        }
+    }
+
+    // A CUDA request must fail loudly, never quietly embed on the CPU: a
+    // deployment or a measurement that asked for the GPU and silently got the
+    // CPU reports the wrong device's behaviour. The device is opened before any
+    // model download, so this is hermetic.
+    #[cfg(feature = "candle-backend")]
+    #[test]
+    fn candle_cuda_request_without_cuda_support_is_an_error_not_a_cpu_fallback() {
+        if candle_core::utils::cuda_is_available() {
+            // CUDA is compiled in, so the request can legitimately succeed; the
+            // device proof for that build lives in the bake-off harness.
+            return;
+        }
+        let err = backend_by_name(Some("candle-cuda"))
+            .err()
+            .expect("a CUDA request on a build without CUDA must be refused")
+            .to_string();
+        assert!(err.contains("CUDA"), "{err}");
+        assert!(err.contains("no CPU fallback"), "{err}");
     }
 }

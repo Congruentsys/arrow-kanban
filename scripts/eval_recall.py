@@ -51,7 +51,8 @@ def run_query(root, provider, text, top_k=10):
 
 def main():
     if len(sys.argv) < 2:
-        print(f"usage: {sys.argv[0]} <hash|fastembed> [board-root]", file=sys.stderr)
+        print(f"usage: {sys.argv[0]} <hash|fastembed|fastembed-fp32|candle|candle-cuda> "
+              "[board-root]", file=sys.stderr)
         sys.exit(2)
     provider = sys.argv[1]
     root = sys.argv[2] if len(sys.argv) > 2 else "/tmp/arrow-kanban-eval-board"
