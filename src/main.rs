@@ -93,8 +93,9 @@ enum Commands {
         /// Skip computing a semantic embedding for this item
         #[arg(long)]
         no_embed: bool,
-        /// Embedding backend for this item: hash (default; offline) or
-        /// fastembed (needs `--features fastembed-backend`)
+        /// Embedding backend for this item: hash (default; offline),
+        /// fastembed or fastembed-fp32 (needs `--features fastembed-backend`),
+        /// candle or candle-cuda (needs `--features candle-backend`)
         #[arg(long)]
         embedding_provider: Option<String>,
     },
@@ -243,8 +244,9 @@ enum Commands {
         /// Limit results (default 20)
         #[arg(long, default_value = "20")]
         top: usize,
-        /// Embedding provider for --semantic: hash (default; offline) or
-        /// fastembed (needs `--features fastembed-backend`)
+        /// Embedding provider for --semantic: hash (default; offline),
+        /// fastembed or fastembed-fp32 (needs `--features fastembed-backend`),
+        /// candle or candle-cuda (needs `--features candle-backend`)
         #[arg(long)]
         embedding_provider: Option<String>,
         /// Semantic search: rank by cosine similarity over the stored
@@ -263,8 +265,9 @@ enum Commands {
     /// `--no-embed`, or created via the NATS server path (which does not
     /// yet auto-populate embeddings; see `Commands::Create`).
     Embed {
-        /// Embedding backend: hash (default; offline) or fastembed (needs
-        /// `--features fastembed-backend`)
+        /// Embedding backend: hash (default; offline), fastembed or
+        /// fastembed-fp32 (needs `--features fastembed-backend`), candle or
+        /// candle-cuda (needs `--features candle-backend`)
         #[arg(long)]
         embedding_provider: Option<String>,
         /// Re-embed every item, including ones that already have an

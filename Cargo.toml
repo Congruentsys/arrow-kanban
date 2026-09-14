@@ -29,14 +29,33 @@ sha2 = "0.10"
 async-nats = { version = "0.38", optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
 fastembed = { version = "6", optional = true, default-features = false, features = ["ort-download-binaries-native-tls", "hf-hub-native-tls"] }
+candle-core = { version = "0.9.2", optional = true }
+candle-nn = { version = "0.9.2", optional = true }
+candle-transformers = { version = "0.9.2", optional = true }
+tokenizers = { version = "0.22.2", optional = true, default-features = false, features = ["onig"] }
+hf-hub = { version = "0.5.0", optional = true, default-features = false, features = ["ureq", "native-tls"] }
 
 [features]
 default = []
 client = ["dep:async-nats", "dep:tokio"]
 # Real neural embeddings (fastembed-rs, ONNX). Off by default so `cargo build`/`cargo test`
 # stay hermetic and never need network or a downloaded model — the built-in HashEmbedBackend
-# covers that path. Enable to get the shipped-default semantic backend named in EX-8693.
+# covers that path. Enable to get the shipped-default semantic backend.
 fastembed-backend = ["dep:fastembed"]
+# Pure-Rust neural embeddings (candle, FP32 safetensors all-MiniLM-L6-v2), CPU. Off by default for
+# the same hermeticity reason. CUDA is deliberately NOT a feature of this crate: CI builds with
+# `--all-features` on runners that have no CUDA toolchain, and candle's CUDA kernels are compiled
+# with nvcc at build time, so a CUDA feature here would break every `--all-features` job. Enable
+# CUDA by passing candle's own feature through instead:
+#   cargo build --release --features candle-backend,candle-transformers/cuda
+# On aarch64 Linux, candle's matrix kernels (gemm-f16) need the fp16 target feature at compile
+# time: RUSTFLAGS="-C target-feature=+fp16" (Apple Silicon targets enable it by default).
+candle-backend = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:hf-hub"]
+
+# The embedding-backend bake-off harness (docs/embedding-bakeoff.md). Needs both neural backends.
+[[example]]
+name = "embedding_bakeoff"
+required-features = ["fastembed-backend", "candle-backend"]
 
 [dev-dependencies]
 tempfile = "3"

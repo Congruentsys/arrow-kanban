@@ -24,6 +24,14 @@ BIN = os.environ.get(
 
 
 def fetch_issues(limit=100):
+    # EVAL_ISSUES_JSON pins the corpus to a frozen snapshot (the same
+    # `gh issue list --json number,title,body` shape), so every provider in a
+    # multi-backend comparison embeds byte-identical text even if an issue is
+    # filed or edited between runs. Unset, the corpus is fetched live.
+    frozen = os.environ.get("EVAL_ISSUES_JSON")
+    if frozen:
+        with open(frozen) as f:
+            return json.load(f)
     result = subprocess.run(
         ["gh", "issue", "list", "--repo", REPO, "--state", "all",
          "--limit", str(limit), "--json", "number,title,body"],
@@ -34,7 +42,8 @@ def fetch_issues(limit=100):
 
 def main():
     if len(sys.argv) < 2:
-        print(f"usage: {sys.argv[0]} <hash|fastembed> [board-root]", file=sys.stderr)
+        print(f"usage: {sys.argv[0]} <hash|fastembed|fastembed-fp32|candle|candle-cuda> "
+              "[board-root]", file=sys.stderr)
         sys.exit(2)
     provider = sys.argv[1]
     root = sys.argv[2] if len(sys.argv) > 2 else "/tmp/arrow-kanban-eval-board"
