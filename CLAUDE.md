@@ -24,6 +24,13 @@ It scans `src tests ontology themes server/src server/tests docs` and fails on:
 
   Synthetic examples using `-42`, `-1234`, `-1235` or `-1240` are allowed, and fixture DATA such
   as `"EX-3001"` is fine.
+- **Closed ontology vocabulary and closed crate names** (the `VOCAB` and `CLOSED_CRATES` lists in
+  the gate).
+- **Fleet-governance concepts that belong in the private composition layer, not the engine**: rank
+  and ratification gate identifiers, decision ledgers, training and runtime-config terms (the
+  `D1_CONCEPTS` list). A tag value is opaque data and is fine; the enforcement machinery is not.
+- **A hardcoded agent roster**: two or more agent names in a comma or semicolon list. The engine
+  derives agents from board data. A single assignee value is fine.
 - The upstream CLI alias (`nk <cmd>`) or the word `CLAUDE` anywhere in the scanned tree. The
   public binary is `arrow-kanban`.
 - Committed board state or data: `*.parquet`, `.arrow-kanban/`, or top-level `research/`,
