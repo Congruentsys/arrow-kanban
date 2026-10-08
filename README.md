@@ -45,15 +45,21 @@ consumer's job — which is exactly why the engine is generic. See
 ## Install
 
 ```bash
-# From a local checkout
-cargo install --path .
+# From git: name the package, because the repo builds two binaries
+cargo install --git https://github.com/Congruentsys/arrow-kanban arrow-kanban
 
-# Or from git
-cargo install --git https://github.com/Congruentsys/arrow-kanban
+# Or from a local checkout
+cargo install --path .
 ```
 
 Requires a Rust toolchain supporting **edition 2024** (Rust 1.85 or newer). This installs the
 `arrow-kanban` binary. The default build has no network dependencies at all.
+
+The repo is a workspace with two packages, each with one binary: `arrow-kanban` (the CLI and
+engine) and `arrow-kanban-server` (the NATS request-reply server). A `--git` install without a
+package name fails with `multiple packages with binaries found`. To install the server, run
+`cargo install --git https://github.com/Congruentsys/arrow-kanban arrow-kanban-server` or
+`cargo install --path server` from a checkout.
 
 ## Quickstart
 
