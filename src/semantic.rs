@@ -5,7 +5,7 @@
 //! No ANN index. At kanban scale (hundreds to low thousands of items) a
 //! linear scan over resident f32 vectors is fast enough that adding an
 //! index would trade simplicity for a speedup nobody can feel — see
-//! `cosine_search_over_a_thousand_items_is_sub_millisecond` for the
+//! `cosine_search_over_a_thousand_items_stays_under_fifty_ms` for the
 //! measured number this claim rests on, not an assertion.
 
 use crate::query::{QueryFilters, RankedResult, parse_nl_query};
@@ -344,12 +344,13 @@ mod tests {
     }
 
     /// Measures the claim Phase 2 asks to be justified rather than asserted:
-    /// "at kanban scale this is sub-millisecond; no ANN dependency". Prints
+    /// "at kanban scale a linear scan is fast; no ANN dependency". Prints
     /// the observed latency (see `cargo test -- --nocapture`) and asserts a
-    /// generous upper bound so the claim stays checked, not just measured
-    /// once by hand.
+    /// generous 50 ms upper bound so the claim stays checked, not just
+    /// measured once by hand. The bound is what the name states; the printed
+    /// number is the measurement.
     #[test]
-    fn cosine_search_over_a_thousand_items_is_sub_millisecond() {
+    fn cosine_search_over_a_thousand_items_stays_under_fifty_ms() {
         let n = 1000;
         let rows: Vec<(String, Vec<f32>)> =
             (0..n).map(|i| (format!("item {i}"), unit(i))).collect();
@@ -377,7 +378,7 @@ mod tests {
         assert_eq!(results.len(), 10);
         assert!(
             elapsed.as_millis() < 50,
-            "expected sub-millisecond-scale search, took {elapsed:?} over {n} items \
+            "expected search under 50 ms, took {elapsed:?} over {n} items \
              (generous CI bound — see stdout for the actual measured number)"
         );
     }

@@ -23,8 +23,7 @@ A kanban CRUD is not interesting. These are the things this engine does that mos
 - **Data-driven vocabulary.** The typed-relationship vocabulary and item-type classes are
   declared in a `.ttl` (`ontology/kanban.ttl`, compiled into the binary); lifecycles and WIP
   policy live in `config.yaml`. **A new relationship is a data edit, not a code change** — add
-  an `owl:ObjectProperty` with its domain, range, and inverse, then rebuild: no Rust changes
-  (measured three separate times on the fleet that runs this).
+  an `owl:ObjectProperty` with its domain, range, and inverse, then rebuild: no Rust changes.
 - **Typed, directional relationships.** `dependsOn`, `blocks`, `implements`, `validates`,
   `measures`, `partOf`, … so you can ask *which experiment validates this hypothesis?* without
   parsing prose — while the flat dependency columns planning views need are kept as a projection
@@ -107,7 +106,7 @@ Every item carries a `FixedSizeList<Float32, 384>` `embedding` column, resident 
 row (not a sidecar store), computed at `create` time and searched with a brute-force cosine
 scan — no ANN index, because at kanban scale (hundreds to low thousands of items) a linear
 scan is already fast: **~1.6 ms over 1,000 items** in a release build (measured in
-`semantic::tests::cosine_search_over_a_thousand_items_is_sub_millisecond`, run it yourself
+`semantic::tests::cosine_search_over_a_thousand_items_stays_under_fifty_ms`, run it yourself
 with `cargo test --release -- --nocapture` to reproduce the number on your hardware).
 
 ```bash
